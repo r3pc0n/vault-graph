@@ -11,7 +11,11 @@
     --text-secondary: #c3c2b7;
     --text-muted:     #898781;
     --gridline:       #2c2c2a;
-    --border:         rgba(255,255,255,0.10);
+    /* derived from --text-muted, not a literal color - a translucent WHITE
+       divider reads fine on a dark theme but disappears entirely against a
+       light one. color-mix() re-evaluates live whenever --text-muted
+       changes (every theme switch), no per-theme value needed. */
+    --border:         color-mix(in srgb, var(--text-muted) 22%, transparent);
     --other:          #6b6a65;
 
     --series-1: #3987e5; /* blue    */
@@ -44,7 +48,10 @@
 
   #legend {
     position: fixed; top: 14px; left: 14px;
-    background: rgba(26, 26, 25, 0.78);
+    /* derived from --surface-1, not a hardcoded dark color - it used to
+       stay dark even on a light theme, leaving light-theme text unreadable
+       against it. Tracks whatever the current theme's surface actually is. */
+    background: color-mix(in srgb, var(--surface-1) 82%, transparent);
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 10px 14px;
@@ -178,7 +185,8 @@
     position: fixed; top: 14px; right: 14px;
     width: 260px; max-height: calc(100vh - 28px);
     overflow-y: auto;
-    background: rgba(10, 10, 15, 0.85);
+    /* same fix as #legend above - tracks the current theme's surface */
+    background: color-mix(in srgb, var(--surface-1) 85%, transparent);
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 10px 14px;
@@ -255,7 +263,7 @@
 // literal color values at draw time rather than reading CSS live itself -
 // see refreshThemeColors()/applyTheme() further down.
 let PALETTE = [];
-let OTHER_COLOR, GRIDLINE, TEXT_SECONDARY, TEXT_MUTED;
+let OTHER_COLOR, GRIDLINE, TEXT_SECONDARY, TEXT_MUTED, TEXT_PRIMARY;
 
 // read/write pulse colors are deliberately NOT part of the theme picker -
 // see the --activity-read/--activity-write comment in <style> - so these
@@ -276,6 +284,7 @@ function refreshThemeColors() {
   GRIDLINE = getVar('--gridline');
   TEXT_SECONDARY = getVar('--text-secondary');
   TEXT_MUTED = getVar('--text-muted');
+  TEXT_PRIMARY = getVar('--text-primary');
   buildBgGradient();
 }
 
@@ -1066,6 +1075,17 @@ function hexToRgb(hex) {
 const READ_RGB = hexToRgb(ACTIVITY_READ_COLOR);
 const WRITE_RGB = hexToRgb(ACTIVITY_WRITE_COLOR);
 
+// theme-aware replacement for a literal white: whatever actually reads as
+// "brightest, most legible" against the current theme's own background -
+// near-white on a dark theme, near-black on a light one - since --text-primary
+// is exactly that signal already, chosen by each theme for contrast against
+// its own surface. Used for glows/highlights/stars that want to read as
+// maximally salient regardless of theme, not a specific literal color.
+function rgbaText(alpha) {
+  const [r, g, b] = hexToRgb(TEXT_PRIMARY);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
 // legend rows are fully rebuilt by renderLegend() on every /api/graph poll,
 // so a one-time inline style would just get wiped — this re-applies the
 // current decayed glow every frame instead, querying live DOM each time
@@ -1190,7 +1210,7 @@ function drawStarfield() {
 
     ctx.beginPath();
     ctx.arc(sx, sy, s.r, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+    ctx.fillStyle = rgbaText(alpha);
     ctx.fill();
   }
 }
@@ -1664,8 +1684,8 @@ function draw() {
     } else {
       ctx.lineWidth = 1;
       ctx.globalAlpha = 1;
-      ctx.strokeStyle = dimmed ? 'rgba(255,255,255,0.03)' :
-        (neighbors ? 'rgba(255,255,255,0.35)' : GRIDLINE);
+      ctx.strokeStyle = dimmed ? rgbaText(0.03) :
+        (neighbors ? rgbaText(0.35) : GRIDLINE);
     }
     ctx.beginPath();
     ctx.moveTo(a.sx, a.sy);
@@ -1680,13 +1700,14 @@ function draw() {
     const dimmed = (neighbors && node.id !== focusId && !neighbors.has(node.id)) || !inFocusedFolder(node);
     const color = colorForSlot(node.slot);
 
-    // recency glow: soft white halo, fades out over 90s
+    // recency glow: soft halo in whatever reads as "brightest" for the
+    // current theme, fades out over 90s
     const age = now - node.mtime;
     if (age >= 0 && age < 90000 && !dimmed) {
       const glowAlpha = 0.35 * (1 - age / 90000);
       ctx.beginPath();
       ctx.arc(p.sx, p.sy, r + 6 * p.factor, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(255,255,255,${glowAlpha})`;
+      ctx.fillStyle = rgbaText(glowAlpha);
       ctx.fill();
     }
 
@@ -1733,7 +1754,7 @@ function draw() {
     ctx.globalAlpha = dimmed ? 0.15 : 1;
     const glowR = r * 1.7;
     const grad = ctx.createRadialGradient(p.sx, p.sy, 0, p.sx, p.sy, glowR);
-    grad.addColorStop(0, '#ffffff');
+    grad.addColorStop(0, TEXT_PRIMARY);
     grad.addColorStop(0.28, color);
     grad.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.beginPath();
@@ -1744,7 +1765,7 @@ function draw() {
       ctx.beginPath();
       ctx.arc(p.sx, p.sy, r, 0, Math.PI * 2);
       ctx.lineWidth = 2;
-      ctx.strokeStyle = '#ffffff';
+      ctx.strokeStyle = TEXT_PRIMARY;
       ctx.stroke();
     }
     ctx.globalAlpha = 1;
@@ -1768,7 +1789,7 @@ function draw() {
       const flashAlpha = 0.85 * Math.min(1, node.writeFlash);
       const flashR = Math.max(r * (1.5 + 0.5 * Math.min(1.5, node.writeFlash)), WRITE_FLASH_MIN_PX * p.factor);
       const flashGrad = ctx.createRadialGradient(p.sx, p.sy, 0, p.sx, p.sy, flashR);
-      flashGrad.addColorStop(0, '#ffffff');
+      flashGrad.addColorStop(0, TEXT_PRIMARY);
       flashGrad.addColorStop(0.35, ACTIVITY_WRITE_COLOR);
       flashGrad.addColorStop(1, 'rgba(0,0,0,0)');
       ctx.globalAlpha = flashAlpha;
