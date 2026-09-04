@@ -1,0 +1,4 @@
+{
+  "vault_dir": "/path/to/your/obsidian-vault",
+  "port": 8792
+}

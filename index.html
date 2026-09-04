@@ -1,0 +1,1019 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<title>Vault Graph</title>
+<style>
+  :root {
+    --page-plane:     #0d0d0d;
+    --surface-1:      #1a1a19;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --gridline:       #2c2c2a;
+    --border:         rgba(255,255,255,0.10);
+    --other:          #6b6a65;
+
+    --series-1: #3987e5; /* blue    */
+    --series-2: #d95926; /* orange  */
+    --series-3: #199e70; /* aqua    */
+    --series-4: #c98500; /* yellow  */
+    --series-5: #d55181; /* magenta */
+    --series-6: #008300; /* green   */
+    --series-7: #9085e9; /* violet  */
+    --series-8: #e66767; /* red     */
+
+    --activity-read:  #4fc3ff; /* cool blue - read pulse */
+    --activity-write: #ff8a3d; /* warm amber - write flash/ring */
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: var(--page-plane);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: var(--text-primary);
+  }
+  #graph { display: block; width: 100vw; height: 100vh; background: var(--surface-1); cursor: grab; }
+
+  #legend {
+    position: fixed; top: 14px; left: 14px;
+    background: rgba(26, 26, 25, 0.78);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    max-width: 260px;
+    transition: transform 180ms ease;
+  }
+  #legend.collapsed {
+    transform: translateX(calc(-100% + 24px));
+    background: none;
+    border: 0;
+    box-shadow: none;
+    outline: 0;
+  }
+  #legend.collapsed > :not(#legend-toggle) {
+    visibility: hidden;
+  }
+  #legend-toggle {
+    position: absolute;
+    top: 7px;
+    right: 6px;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font: inherit;
+    line-height: 18px;
+  }
+  #legend-toggle:hover {
+    background: var(--border);
+    color: var(--text-primary);
+  }
+
+  #labels-toggle {
+    position: fixed;
+    top: 14px; right: 14px;
+    width: 18px; height: 18px;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font: inherit;
+    font-size: 9px;
+    line-height: 18px;
+    text-align: center;
+  }
+  #labels-toggle:hover {
+    background: var(--border);
+    color: var(--text-primary);
+  }
+  #sound-toggle {
+    position: fixed;
+    top: 14px; right: 40px;
+    width: 18px; height: 18px;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font: inherit;
+    font-size: 11px;
+    line-height: 18px;
+    text-align: center;
+  }
+  #sound-toggle:hover {
+    background: var(--border);
+    color: var(--text-primary);
+  }
+  #legend h1 {
+    font-size: 12px; font-weight: 600; margin: 0 24px 8px 0;
+    color: var(--text-primary); letter-spacing: 0.02em;
+  }
+  #legend .row { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
+  #legend .swatch { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  #legend .row span.name { color: var(--text-secondary); }
+  #legend .meta { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); color: var(--text-muted); }
+
+  #tooltip {
+    position: fixed; pointer-events: none;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 12px;
+    color: var(--text-primary);
+    display: none;
+    max-width: 280px;
+  }
+  #tooltip .folder { color: var(--text-muted); font-size: 11px; }
+</style>
+</head>
+<body>
+<canvas id="graph"></canvas>
+<div id="legend">
+  <button id="legend-toggle" type="button" aria-label="Collapse folder menu" aria-expanded="true">‹</button>
+  <h1>VAULT GRAPH — live</h1>
+  <div id="legend-rows"></div>
+  <div class="meta" id="legend-meta">loading…</div>
+</div>
+<div id="tooltip"></div>
+<button id="labels-toggle" type="button" aria-label="Hide note labels" aria-pressed="false">Aa</button>
+<button id="sound-toggle" type="button" aria-label="Mute activity sounds" aria-pressed="false">🔊</button>
+
+<script>
+const PALETTE = [
+  getVar('--series-1'), getVar('--series-2'), getVar('--series-3'), getVar('--series-4'),
+  getVar('--series-5'), getVar('--series-6'), getVar('--series-7'), getVar('--series-8'),
+];
+const OTHER_COLOR = getVar('--other');
+const GRIDLINE = getVar('--gridline');
+const TEXT_SECONDARY = getVar('--text-secondary');
+const TEXT_MUTED = getVar('--text-muted');
+const ACTIVITY_READ_COLOR = getVar('--activity-read');
+const ACTIVITY_WRITE_COLOR = getVar('--activity-write');
+
+function getVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+const canvas = document.getElementById('graph');
+const ctx = canvas.getContext('2d');
+const tooltip = document.getElementById('tooltip');
+const legend = document.getElementById('legend');
+const legendToggle = document.getElementById('legend-toggle');
+const labelsToggle = document.getElementById('labels-toggle');
+const soundToggle = document.getElementById('sound-toggle');
+
+legendToggle.addEventListener('click', () => {
+  const collapsed = legend.classList.toggle('collapsed');
+  legendToggle.textContent = collapsed ? '›' : '‹';
+  legendToggle.setAttribute('aria-label', collapsed ? 'Expand folder menu' : 'Collapse folder menu');
+  legendToggle.setAttribute('aria-expanded', String(!collapsed));
+});
+
+// on-canvas note-title labels (hub/focused/hovered notes) — persisted across
+// reloads so the choice sticks; this is a local single-user page, not a
+// published artifact, so plain localStorage applies with no special handling
+let labelsVisible = true;
+try {
+  const stored = localStorage.getItem('vault-graph-labels-visible');
+  if (stored !== null) labelsVisible = stored === 'true';
+} catch (e) {
+  // private window / storage blocked — fall back to the default (visible)
+}
+
+function updateLabelsToggle() {
+  labelsToggle.setAttribute('aria-pressed', String(!labelsVisible));
+  labelsToggle.setAttribute('aria-label', labelsVisible ? 'Hide note labels' : 'Show note labels');
+}
+updateLabelsToggle();
+
+labelsToggle.addEventListener('click', () => {
+  labelsVisible = !labelsVisible;
+  try { localStorage.setItem('vault-graph-labels-visible', String(labelsVisible)); } catch (e) {}
+  updateLabelsToggle();
+});
+
+// activity sound: soft tones on read/write events, same persisted-toggle
+// pattern as labelsVisible above. Defaults on; the click that mutes/unmutes
+// also doubles as the user gesture browsers require before audio can play.
+let soundEnabled = true;
+try {
+  const storedSound = localStorage.getItem('vault-graph-sound-enabled');
+  if (storedSound !== null) soundEnabled = storedSound === 'true';
+} catch (e) {
+  // private window / storage blocked — fall back to the default (on)
+}
+
+function updateSoundToggle() {
+  soundToggle.textContent = soundEnabled ? '🔊' : '🔇';
+  soundToggle.setAttribute('aria-pressed', String(!soundEnabled));
+  soundToggle.setAttribute('aria-label', soundEnabled ? 'Mute activity sounds' : 'Unmute activity sounds');
+}
+updateSoundToggle();
+
+soundToggle.addEventListener('click', () => {
+  soundEnabled = !soundEnabled;
+  try { localStorage.setItem('vault-graph-sound-enabled', String(soundEnabled)); } catch (e) {}
+  updateSoundToggle();
+  ensureAudioCtx();  // this click is a user gesture — use it to unlock audio early
+});
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+let nodesById = new Map();   // id -> {id,label,folder,slot,mtime,degree,x,y,z,vx,vy,vz}
+let edges = [];              // [{source,target}] (ids)
+let folders = [];
+let focusId = null;
+let hoverId = null;
+let anchorId = null;         // most-connected note — pinned at the origin, the "sun" everything else orbits
+let activityCursor = 0;      // cursor into /api/activity — highest event id applied so far
+let edgeActivity = new Map();     // edgeKey(a,b) -> {intensity, lastUpdate, action} — decays independently per edge
+let folderActivity = new Map();   // folder legend key -> {intensity, lastUpdate, action}
+let pendingActivity = [];    // {ev, receivedAt} — events for a path not yet in nodesById (e.g. a just-created note),
+                              // replayed once /api/graph catches up rather than dropped silently
+
+function edgeKey(a, b) {
+  // JSON.stringify of a sorted pair, not a joined string — filenames could
+  // theoretically contain any plain separator character (e.g. "|"), and this
+  // representation can't collide the way string-joining could.
+  return JSON.stringify([a, b].sort());
+}
+
+function hexToRgb(hex) {
+  const h = hex.replace('#', '');
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+}
+const READ_RGB = hexToRgb(ACTIVITY_READ_COLOR);
+const WRITE_RGB = hexToRgb(ACTIVITY_WRITE_COLOR);
+
+// legend rows are fully rebuilt by renderLegend() on every /api/graph poll,
+// so a one-time inline style would just get wiped — this re-applies the
+// current decayed glow every frame instead, querying live DOM each time
+// rather than caching row references, so it survives the periodic rebuild.
+function updateLegendGlow() {
+  const now = Date.now();
+  document.querySelectorAll('#legend-rows .row').forEach(row => {
+    const folder = row.dataset.folder;
+    const act = folderActivity.get(folder);
+    if (!act) { row.style.boxShadow = ''; return; }
+    const tau = act.action === 'write' ? EDGE_WRITE_TAU_MS : EDGE_READ_TAU_MS;
+    const elapsed = now - act.lastUpdate;
+    act.intensity *= Math.exp(-elapsed / tau);
+    act.lastUpdate = now;
+    if (act.intensity < 0.02) {
+      folderActivity.delete(folder);
+      row.style.boxShadow = '';
+      return;
+    }
+    const t = Math.min(1, act.intensity);
+    const [cr, cg, cb] = act.action === 'write' ? WRITE_RGB : READ_RGB;
+    row.style.boxShadow = `0 0 ${(5 + 9 * t).toFixed(1)}px rgba(${cr},${cg},${cb},${(0.25 + 0.55 * t).toFixed(2)})`;
+  });
+}
+
+// ---- orbit camera: drag rotates the whole system around the fixed anchor, wheel dollies in/out ----
+const camera = { yaw: 0, pitch: 0.35, dist: 420 };
+const FOCAL = 420;
+
+function project(node) {
+  const cosY = Math.cos(camera.yaw), sinY = Math.sin(camera.yaw);
+  const x1 = node.x * cosY + node.z * sinY;
+  const z1 = -node.x * sinY + node.z * cosY;
+
+  const cosP = Math.cos(camera.pitch), sinP = Math.sin(camera.pitch);
+  const y2 = node.y * cosP - z1 * sinP;
+  const z2 = node.y * sinP + z1 * cosP;
+
+  const depth = Math.max(40, z2 + camera.dist);
+  const factor = FOCAL / depth;
+  return {
+    sx: canvas.width / 2 + x1 * factor,
+    sy: canvas.height / 2 + y2 * factor,
+    depth, factor,
+  };
+}
+
+let projected = [];  // [{node, sx, sy, sr, depth, factor}], recomputed once per frame, shared by drawing + hit-testing
+
+// ---- starfield backdrop (fixed to viewport, twinkles, doesn't move with the camera) ----
+const STARS = Array.from({ length: 220 }, () => ({
+  x: Math.random(), y: Math.random(),
+  r: Math.random() * 1.3 + 0.3,
+  seed: Math.random() * 1000,
+}));
+function drawStarfield() {
+  const now = Date.now();
+  for (const s of STARS) {
+    const alpha = 0.25 + 0.6 * Math.abs(Math.sin(now / 1400 + s.seed));
+    ctx.beginPath();
+    ctx.arc(s.x * canvas.width, s.y * canvas.height, s.r, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+    ctx.fill();
+  }
+}
+
+function colorForSlot(slot) {
+  return slot >= 0 && slot < PALETTE.length ? PALETTE[slot] : OTHER_COLOR;
+}
+
+async function poll() {
+  try {
+    const res = await fetch('/api/graph');
+    const data = await res.json();
+    applyGraph(data);
+  } catch (e) {
+    // server between restarts, etc — just try again next tick
+  }
+  setTimeout(poll, 2000);
+}
+
+// ---- activity feed: your coding agent's hooks report reads/writes here.
+// Polled separately from /api/graph (faster, cursor-based on event id) so a
+// note can react within a few hundred ms. Per-node intensities decay by
+// elapsed wall-clock time, not frame count, so playback stays consistent
+// regardless of frame rate.
+// Tuned 2026-08-31 after live observation: on a real desktop, most notes are
+// low-degree with a tiny base radius, so an overlay purely proportional to
+// that radius was only ~8-12px across and nearly imperceptible even when
+// told exactly when to look. Every overlay below now has an absolute pixel
+// floor independent of node size, plus longer hold times and higher peak
+// opacity, verified by reading actual canvas pixel data, not screenshots.
+const READ_TAU_MS = 900;          // read glow decay time constant
+const READ_BOOST = 0.6, READ_MAX = 1.6;
+const READ_MIN_PX = 18;           // floor screen radius for the read glow
+const WRITE_FLASH_TAU_MS = 350;   // still faster than read (a flash, not a glow) but no longer gone in a blink
+const WRITE_FLASH_BOOST = 1.0, WRITE_FLASH_MAX = 2.2;
+const WRITE_FLASH_MIN_PX = 24;    // floor screen radius for the write flash — bigger than read's, reads as "stronger"
+const WRITE_RING_DURATION_MS = 1600;
+const WRITE_RING_START_GAP_PX = 5;  // ring starts this far outside the node edge so it reads as a ring, not paint-on-top, even at t=0
+const WRITE_RING_GROWTH = 40;     // px the ring expands beyond its start gap over its lifetime
+const WRITE_RING_MAX_PER_NODE = 6;
+
+// Phase 3 (2026-08-31): a touched note's existing wikilink edges, and its
+// folder's legend row, get a derived echo of the same read/write signal —
+// shared timing model for both, separate from the primary node constants
+// above. Edges are thin (1px) lines, even more prone to the "too subtle"
+// problem the node tuning pass just fixed, so these lean toward longer/
+// stronger rather than matching the node values exactly.
+const EDGE_READ_TAU_MS = 900, EDGE_READ_BOOST = 0.6, EDGE_READ_MAX = 1.6;
+const EDGE_WRITE_TAU_MS = 1400, EDGE_WRITE_BOOST = 1.0, EDGE_WRITE_MAX = 2.0;
+const PENDING_EVENT_TTL_MS = 5000;  // how long an event for an unknown path is held before being dropped
+
+// activity sound: a wind chime, per 2026-09-02 call. Synthesized attempts
+// (sine partials at inharmonic bell ratios) topped out sounding like a
+// struck pot rather than a chime — real metal-on-metal texture is past what
+// pure tones can fake — so this plays back a real recorded strike instead,
+// varying its pitch via playback rate. That has a useful side effect for
+// free: speeding it up also shortens the ring, slowing it down lengthens
+// it, which is exactly how a shorter/longer tube actually behaves. Read
+// plays faster/brighter/shorter, write slower/deeper/longer — same
+// distinguishable-by-ear split as before, same no-throttling stance (an
+// overlapping burst during a run of vault activity IS the gust).
+const CHIME_SAMPLE_URL = 'assets/wind-chime-single.wav';
+const READ_RATE_MIN = 1.15, READ_RATE_MAX = 1.6;
+const WRITE_RATE_MIN = 0.7, WRITE_RATE_MAX = 1.0;
+const READ_GAIN = 0.35, WRITE_GAIN = 0.55;
+const GAIN_JITTER = 0.15;      // +/- per-strike loudness variance, so repeats don't sound mechanically identical
+const CHIME_PAN_SPREAD = 0.8;  // +/- stereo pan range per strike, so a burst spreads across the field like hanging tubes instead of stacking dead-center
+
+let audioCtx = null;
+let chimeBufferPromise = null;
+
+function ensureAudioCtx() {
+  if (!audioCtx) {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return null;
+    audioCtx = new Ctx();
+    chimeBufferPromise = fetch(CHIME_SAMPLE_URL)
+      .then(res => res.arrayBuffer())
+      .then(buf => audioCtx.decodeAudioData(buf))
+      .catch(() => null);  // sample missing/blocked — playActivityTone just no-ops
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+
+function playActivityTone(action) {
+  if (!soundEnabled) return;
+  const ctx = ensureAudioCtx();
+  if (!ctx || ctx.state !== 'running' || !chimeBufferPromise) return;  // still locked pending a user gesture
+  chimeBufferPromise.then(buffer => {
+    if (!buffer || !soundEnabled) return;
+    const isWrite = action === 'write';
+    const rateMin = isWrite ? WRITE_RATE_MIN : READ_RATE_MIN;
+    const rateMax = isWrite ? WRITE_RATE_MAX : READ_RATE_MAX;
+    const baseGain = isWrite ? WRITE_GAIN : READ_GAIN;
+
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.playbackRate.value = rateMin + Math.random() * (rateMax - rateMin);
+
+    const gain = ctx.createGain();
+    gain.gain.value = baseGain * (1 - GAIN_JITTER + Math.random() * GAIN_JITTER * 2);
+
+    const pan = ctx.createStereoPanner();
+    pan.pan.value = (Math.random() * 2 - 1) * CHIME_PAN_SPREAD;
+
+    src.connect(gain).connect(pan).connect(ctx.destination);
+    src.start();
+  });
+}
+
+// Active-note label timing (2026-08-31): deliberately decoupled from the node's
+// own readIntensity/writeFlash decay above. The node flash/ring stay fast and
+// energetic; the label instead holds fully readable for a fixed window, then
+// fades on its own separate schedule, refreshed by each new event rather than
+// tracking pulse intensity directly.
+const LABEL_HOLD_MS = 8000;
+const LABEL_FADE_MS = 600;
+
+async function pollActivity() {
+  try {
+    const res = await fetch(`/api/activity?since=${activityCursor}`);
+    const data = await res.json();
+    for (const ev of data.events) {
+      if (ev.id > activityCursor) activityCursor = ev.id;
+      applyActivityEvent(ev);
+    }
+  } catch (e) {
+    // server between restarts, etc — just try again next tick
+  }
+  setTimeout(pollActivity, 450);
+}
+
+function applyActivityEvent(ev) {
+  const node = nodesById.get(ev.path);
+  if (!node) {
+    // note not in the currently-known graph yet (e.g. a brand-new note read/
+    // written right after creation, racing the next /api/graph poll) — hold
+    // briefly instead of dropping, replayed from applyGraph() once it lands
+    pendingActivity.push({ ev, receivedAt: Date.now() });
+    return;
+  }
+  applyActivityToNode(node, ev);
+}
+
+function applyActivityToNode(node, ev) {
+  const now = Date.now();
+  playActivityTone(ev.action);
+  if (ev.action === 'read') {
+    node.readIntensity = Math.min(READ_MAX, (node.readIntensity || 0) + READ_BOOST);
+    node.readLastUpdate = now;
+  } else if (ev.action === 'write') {
+    node.writeFlash = Math.min(WRITE_FLASH_MAX, (node.writeFlash || 0) + WRITE_FLASH_BOOST);
+    node.writeFlashLastUpdate = now;
+    const rings = node.writeRings || (node.writeRings = []);
+    rings.push({ start: now });
+    if (rings.length > WRITE_RING_MAX_PER_NODE) rings.shift();
+  }
+
+  // active-note label: independent hold/fade window, refreshed (not stacked)
+  // by every event. Write precedence sticks — once a write has shown the
+  // label amber, a subsequent read before it fully expires keeps it amber
+  // and just extends the hold, rather than downgrading back to blue.
+  node.labelAction = ev.action === 'write' ? 'write' : (node.labelAction === 'write' ? 'write' : 'read');
+  node.labelExpiresAt = now + LABEL_HOLD_MS;
+
+  // derived echo: this note's existing wikilink edges, and its folder's
+  // legend row, get the same read/write signal — a note's edges are computed
+  // atomically alongside it server-side, so by the time `node` resolves here
+  // (whether immediately or via pending replay) its edges are already current
+  const isWrite = ev.action === 'write';
+  const edgeCap = isWrite ? EDGE_WRITE_MAX : EDGE_READ_MAX;
+  const edgeBoost = isWrite ? EDGE_WRITE_BOOST : EDGE_READ_BOOST;
+  for (const e of edges) {
+    if (e.source !== node.id && e.target !== node.id) continue;
+    const key = edgeKey(e.source, e.target);
+    const existing = edgeActivity.get(key);
+    edgeActivity.set(key, {
+      intensity: Math.min(edgeCap, (existing ? existing.intensity : 0) + edgeBoost),
+      lastUpdate: now,
+      action: ev.action,
+    });
+  }
+
+  const folderKey = node.slot === -1 ? 'Other' : node.folder;
+  const existingFolder = folderActivity.get(folderKey);
+  folderActivity.set(folderKey, {
+    intensity: Math.min(edgeCap, (existingFolder ? existingFolder.intensity : 0) + edgeBoost),
+    lastUpdate: now,
+    action: ev.action,
+  });
+}
+
+function applyGraph(data) {
+  folders = data.folders;
+  const incomingIds = new Set(data.nodes.map(n => n.id));
+
+  // drop nodes that no longer exist
+  for (const id of Array.from(nodesById.keys())) {
+    if (!incomingIds.has(id)) nodesById.delete(id);
+  }
+
+  for (const n of data.nodes) {
+    const existing = nodesById.get(n.id);
+    if (existing) {
+      existing.folder = n.folder;
+      existing.slot = n.slot;
+      existing.mtime = n.mtime;
+      existing.degree = n.degree;
+      existing.label = n.label;
+    } else {
+      // spawn on a shell around the origin so new notes drop into the system, not the void
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      const r = 180 + Math.random() * 80;
+      nodesById.set(n.id, {
+        ...n,
+        x: r * Math.sin(phi) * Math.cos(theta),
+        y: r * Math.sin(phi) * Math.sin(theta),
+        z: r * Math.cos(phi),
+        vx: 0, vy: 0, vz: 0,
+      });
+    }
+  }
+
+  edges = data.edges;
+
+  // drop edge-activity entries for edges that no longer exist (e.g. a
+  // wikilink was removed) — otherwise they'd never be visited again by the
+  // draw-loop decay, since that loop only walks the current edges array
+  const currentEdgeKeys = new Set(edges.map(e => edgeKey(e.source, e.target)));
+  for (const key of Array.from(edgeActivity.keys())) {
+    if (!currentEdgeKeys.has(key)) edgeActivity.delete(key);
+  }
+
+  // replay activity events that arrived before their note existed here yet
+  if (pendingActivity.length) {
+    const now = Date.now();
+    const stillPending = [];
+    for (const pending of pendingActivity) {
+      if (now - pending.receivedAt > PENDING_EVENT_TTL_MS) continue; // expired — drop
+      const node = nodesById.get(pending.ev.path);
+      if (node) applyActivityToNode(node, pending.ev);
+      else stillPending.push(pending);
+    }
+    pendingActivity = stillPending;
+  }
+
+  // the most-connected note becomes the anchor — pinned dead center, everything else orbits it
+  let best = null;
+  for (const node of nodesById.values()) {
+    if (!best || node.degree > best.degree) best = node;
+  }
+  anchorId = best ? best.id : null;
+
+  renderLegend(data);
+}
+
+function renderLegend(data) {
+  const rows = document.getElementById('legend-rows');
+  rows.innerHTML = '';
+  folders.forEach((f, i) => {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.dataset.folder = f;
+    row.innerHTML = `<span class="swatch" style="background:${colorForSlot(i)}"></span><span class="name">${f}</span>`;
+    rows.appendChild(row);
+  });
+  const hasOther = data.nodes.some(n => n.slot === -1);
+  if (hasOther) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.dataset.folder = 'Other';
+    row.innerHTML = `<span class="swatch" style="background:${OTHER_COLOR}"></span><span class="name">Other</span>`;
+    rows.appendChild(row);
+  }
+  document.getElementById('legend-meta').textContent =
+    `${data.nodes.length} notes · ${data.edges.length} links`;
+}
+
+// ---- 3D force simulation ----
+function step() {
+  const nodes = Array.from(nodesById.values());
+  const n = nodes.length;
+
+  // repulsion
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const a = nodes[i], b = nodes[j];
+      let dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
+      let distSq = dx * dx + dy * dy + dz * dz || 0.01;
+      if (distSq > 40000) continue; // ignore far-apart pairs, cheap cutoff
+      const dist = Math.sqrt(distSq);
+      const force = 900 / distSq;
+      dx /= dist; dy /= dist; dz /= dist;
+      a.vx += dx * force; a.vy += dy * force; a.vz += dz * force;
+      b.vx -= dx * force; b.vy -= dy * force; b.vz -= dz * force;
+    }
+  }
+
+  // edge springs
+  for (const e of edges) {
+    const a = nodesById.get(e.source), b = nodesById.get(e.target);
+    if (!a || !b) continue;
+    let dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz) || 0.01;
+    const rest = 90;
+    const force = (dist - rest) * 0.02;
+    dx /= dist; dy /= dist; dz /= dist;
+    a.vx += dx * force; a.vy += dy * force; a.vz += dz * force;
+    b.vx -= dx * force; b.vy -= dy * force; b.vz -= dz * force;
+  }
+
+  // weak same-folder clustering (position reinforces the color's identity)
+  const centroids = {};
+  for (const node of nodes) {
+    const c = centroids[node.folder] || (centroids[node.folder] = { x: 0, y: 0, z: 0, n: 0 });
+    c.x += node.x; c.y += node.y; c.z += node.z; c.n++;
+  }
+  for (const node of nodes) {
+    const c = centroids[node.folder];
+    node.vx += (c.x / c.n - node.x) * 0.003;
+    node.vy += (c.y / c.n - node.y) * 0.003;
+    node.vz += (c.z / c.n - node.z) * 0.003;
+  }
+
+  // real gravity toward the anchor (inverse-square, softened near r=0) + a gentle
+  // galactic swirl + drift (keeps it feeling alive even at rest) + damping + integrate
+  const GRAVITY = 4500, SOFTEN = 900, SWIRL = 0.035;
+  for (const node of nodes) {
+    const distSq = node.x * node.x + node.y * node.y + node.z * node.z || 1;
+    const dist = Math.sqrt(distSq);
+    const g = GRAVITY / (distSq + SOFTEN);
+    const nx = node.x / dist, ny = node.y / dist, nz = node.z / dist;
+    node.vx += -nx * g;
+    node.vy += -ny * g;
+    node.vz += -nz * g;
+
+    // tangential nudge around the Y axis so the system slowly spins like a galaxy disc
+    node.vx += -nz * SWIRL;
+    node.vz += nx * SWIRL;
+
+    node.vx += (Math.random() - 0.5) * 0.05;
+    node.vy += (Math.random() - 0.5) * 0.05;
+    node.vz += (Math.random() - 0.5) * 0.05;
+    node.vx *= 0.86; node.vy *= 0.86; node.vz *= 0.86;
+    node.x += node.vx; node.y += node.vy; node.z += node.vz;
+  }
+
+  // the anchor is the sun — pinned dead center, immune to every force above
+  if (anchorId) {
+    const anchor = nodesById.get(anchorId);
+    if (anchor) { anchor.x = anchor.y = anchor.z = 0; anchor.vx = anchor.vy = anchor.vz = 0; }
+  }
+}
+
+function nodeRadius(node) {
+  const base = 4 + Math.min(node.degree, 10) * 0.9;
+  return node.id === anchorId ? base * 1.8 : base;
+}
+
+function computeProjection() {
+  projected = [];
+  for (const node of nodesById.values()) {
+    const p = project(node);
+    projected.push({ node, sx: p.sx, sy: p.sy, sr: nodeRadius(node) * p.factor, depth: p.depth, factor: p.factor });
+  }
+  projected.sort((a, b) => b.depth - a.depth); // far first, near last, so near overlaps far
+}
+
+function draw() {
+  ctx.fillStyle = getVar('--surface-1');
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  drawStarfield();
+
+  computeProjection();
+  const byId = new Map(projected.map(p => [p.node.id, p]));
+  const neighbors = focusId ? neighborSet(focusId) : null;
+  const now = Date.now();
+
+  // edges
+  for (const e of edges) {
+    const a = byId.get(e.source), b = byId.get(e.target);
+    if (!a || !b) continue;
+    const dimmed = neighbors && !(neighbors.has(e.source) && neighbors.has(e.target)) &&
+                   !(e.source === focusId || e.target === focusId);
+
+    // activity echo: a touched note's edges brighten (and, for writes,
+    // thicken) with the same read/write color language as the node pulses,
+    // decaying independently per edge. Decay runs unconditionally so a
+    // dimmed edge doesn't "catch up" with a jump once focus changes; the
+    // highlight itself is only drawn when not dimmed, same as the node overlays.
+    let highlightAlpha = 0, highlightColor = null, highlightWidth = 1;
+    const key = edgeKey(e.source, e.target);
+    const act = edgeActivity.get(key);
+    if (act) {
+      const tau = act.action === 'write' ? EDGE_WRITE_TAU_MS : EDGE_READ_TAU_MS;
+      const elapsed = now - act.lastUpdate;
+      act.intensity *= Math.exp(-elapsed / tau);
+      act.lastUpdate = now;
+      if (act.intensity < 0.02) {
+        edgeActivity.delete(key);
+      } else {
+        const t = Math.min(1, act.intensity);
+        if (act.action === 'write') {
+          highlightAlpha = 0.9 * t;
+          highlightWidth = 1 + 3 * t;   // up to ~4px — "slightly thicken", per spec
+          highlightColor = ACTIVITY_WRITE_COLOR;
+        } else {
+          highlightAlpha = 0.8 * t;
+          highlightWidth = 1 + 1.5 * t; // up to ~2.5px
+          highlightColor = ACTIVITY_READ_COLOR;
+        }
+      }
+    }
+
+    if (!dimmed && highlightAlpha > 0) {
+      ctx.lineWidth = highlightWidth;
+      ctx.globalAlpha = highlightAlpha;
+      ctx.strokeStyle = highlightColor;
+    } else {
+      ctx.lineWidth = 1;
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = dimmed ? 'rgba(255,255,255,0.03)' :
+        (neighbors ? 'rgba(255,255,255,0.35)' : GRIDLINE);
+    }
+    ctx.beginPath();
+    ctx.moveTo(a.sx, a.sy);
+    ctx.lineTo(b.sx, b.sy);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  ctx.lineWidth = 1;
+  for (const p of projected) {
+    const node = p.node;
+    const r = p.sr;
+    const dimmed = neighbors && node.id !== focusId && !neighbors.has(node.id);
+    const color = colorForSlot(node.slot);
+
+    // recency glow: soft white halo, fades out over 90s
+    const age = now - node.mtime;
+    if (age >= 0 && age < 90000 && !dimmed) {
+      const glowAlpha = 0.35 * (1 - age / 90000);
+      ctx.beginPath();
+      ctx.arc(p.sx, p.sy, r + 6 * p.factor, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(255,255,255,${glowAlpha})`;
+      ctx.fill();
+    }
+
+    // activity decay: continuous, wall-clock based, computed unconditionally
+    // (even while dimmed) so nothing "catches up" with a jump the moment
+    // focus changes elsewhere in the graph
+    if (node.readIntensity) {
+      const elapsed = now - (node.readLastUpdate || now);
+      node.readIntensity *= Math.exp(-elapsed / READ_TAU_MS);
+      node.readLastUpdate = now;
+      if (node.readIntensity < 0.02) node.readIntensity = 0;
+    }
+    if (node.writeFlash) {
+      const elapsed = now - (node.writeFlashLastUpdate || now);
+      node.writeFlash *= Math.exp(-elapsed / WRITE_FLASH_TAU_MS);
+      node.writeFlashLastUpdate = now;
+      if (node.writeFlash < 0.02) node.writeFlash = 0;
+    }
+    if (node.writeRings && node.writeRings.length) {
+      node.writeRings = node.writeRings.filter(ring => now - ring.start < WRITE_RING_DURATION_MS);
+    }
+
+    // write activity: stacked expanding rings, drawn behind the node core so
+    // repeated edits read as multiple concentric pulses rather than one reset
+    if (!dimmed && node.writeRings && node.writeRings.length) {
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = ACTIVITY_WRITE_COLOR;
+      for (const ring of node.writeRings) {
+        const t = (now - ring.start) / WRITE_RING_DURATION_MS; // 0..1
+        // r is already screen-space (nodeRadius * p.factor from computeProjection) —
+        // only the additive gap/growth need their own p.factor, matching how the
+        // existing recency-glow does "r + 6 * p.factor" just above. Fade uses an
+        // ease-out (1-t)^2 rather than linear, so the ring stays legible through
+        // most of its growth instead of being faintest exactly when it's biggest.
+        const ringR = r + (WRITE_RING_START_GAP_PX + WRITE_RING_GROWTH * t) * p.factor;
+        ctx.globalAlpha = 0.6 * (1 - t) * (1 - t);
+        ctx.beginPath();
+        ctx.arc(p.sx, p.sy, ringR, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    ctx.globalAlpha = dimmed ? 0.15 : 1;
+    const glowR = r * 1.7;
+    const grad = ctx.createRadialGradient(p.sx, p.sy, 0, p.sx, p.sy, glowR);
+    grad.addColorStop(0, '#ffffff');
+    grad.addColorStop(0.28, color);
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.beginPath();
+    ctx.arc(p.sx, p.sy, glowR, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+    if (node.id === focusId || node.id === hoverId) {
+      ctx.beginPath();
+      ctx.arc(p.sx, p.sy, r, 0, Math.PI * 2);
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#ffffff';
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    // read/write activity glow: overlay on top of the node core — read is a
+    // subtle cool pulse, write flash is brighter, warmer, and decays faster
+    if (!dimmed && node.readIntensity) {
+      const readAlpha = 0.75 * Math.min(1, node.readIntensity);
+      const readR = Math.max(r * (1.4 + 0.3 * Math.min(1, node.readIntensity)), READ_MIN_PX * p.factor);
+      const readGrad = ctx.createRadialGradient(p.sx, p.sy, 0, p.sx, p.sy, readR);
+      readGrad.addColorStop(0, ACTIVITY_READ_COLOR);
+      readGrad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.globalAlpha = readAlpha;
+      ctx.beginPath();
+      ctx.arc(p.sx, p.sy, readR, 0, Math.PI * 2);
+      ctx.fillStyle = readGrad;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    if (!dimmed && node.writeFlash) {
+      const flashAlpha = 0.85 * Math.min(1, node.writeFlash);
+      const flashR = Math.max(r * (1.5 + 0.5 * Math.min(1.5, node.writeFlash)), WRITE_FLASH_MIN_PX * p.factor);
+      const flashGrad = ctx.createRadialGradient(p.sx, p.sy, 0, p.sx, p.sy, flashR);
+      flashGrad.addColorStop(0, '#ffffff');
+      flashGrad.addColorStop(0.35, ACTIVITY_WRITE_COLOR);
+      flashGrad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.globalAlpha = flashAlpha;
+      ctx.beginPath();
+      ctx.arc(p.sx, p.sy, flashR, 0, Math.PI * 2);
+      ctx.fillStyle = flashGrad;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    // active-note label: transient, independent of the labelsVisible toggle
+    // (that toggle only governs the passive hub/focus/hover label below —
+    // hiding it shouldn't suppress a label explaining a live event), replaces
+    // rather than stacks with that passive label while a note has an active
+    // label window. Deliberately decoupled from the node's own readIntensity/
+    // writeFlash decay (2026-08-31): those stay fast/energetic, but a label
+    // that brief read as a "blink" rather than something legible — so the
+    // label instead holds fully readable for LABEL_HOLD_MS, then fades on its
+    // own separate LABEL_FADE_MS schedule; see applyActivityToNode() for the
+    // hold-refresh and write-precedence rules. Note name prominent with a
+    // soft glow; folder beneath it, smaller and muted, reusing the exact
+    // hierarchy the tooltip already uses for the same note/folder pairing.
+    let labelAlpha = 0;
+    if (node.labelExpiresAt) {
+      if (now < node.labelExpiresAt) {
+        labelAlpha = 1;
+      } else {
+        const fadeElapsed = now - node.labelExpiresAt;
+        if (fadeElapsed < LABEL_FADE_MS) {
+          labelAlpha = 1 - fadeElapsed / LABEL_FADE_MS;
+        } else {
+          node.labelExpiresAt = null;
+          node.labelAction = null;
+        }
+      }
+    }
+    const isActive = !dimmed && labelAlpha > 0;
+    if (isActive) {
+      const alpha = labelAlpha;
+      const color = node.labelAction === 'write' ? ACTIVITY_WRITE_COLOR : ACTIVITY_READ_COLOR;
+      const fontSize = Math.max(8, 12 * p.factor);
+      const lx = p.sx + r + 5, ly = p.sy + 4;
+
+      ctx.globalAlpha = alpha;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 8;
+      ctx.fillStyle = color;
+      ctx.font = `bold ${fontSize.toFixed(1)}px system-ui, sans-serif`;
+      ctx.fillText(node.label, lx, ly);
+
+      ctx.shadowBlur = 0; // subtitle stays crisp, no glow on the secondary line
+      ctx.fillStyle = TEXT_MUTED;
+      ctx.font = `${(fontSize * 0.82).toFixed(1)}px system-ui, sans-serif`;
+      ctx.fillText(node.folder, lx, ly + fontSize * 0.95);
+
+      ctx.globalAlpha = 1;
+    } else if (labelsVisible && !dimmed && (node.degree >= 6 || node.id === focusId || node.id === hoverId)) {
+      // selective direct labels: only hubs, plus whatever's focused/hovered
+      ctx.fillStyle = TEXT_SECONDARY;
+      ctx.font = `${Math.max(8, 11 * p.factor).toFixed(1)}px system-ui, sans-serif`;
+      ctx.fillText(node.label, p.sx + r + 5, p.sy + 4);
+    }
+  }
+}
+
+function neighborSet(id) {
+  const s = new Set();
+  for (const e of edges) {
+    if (e.source === id) s.add(e.target);
+    if (e.target === id) s.add(e.source);
+  }
+  return s;
+}
+
+function nodeAt(screenX, screenY) {
+  let closest = null, closestDist = Infinity;
+  for (const p of projected) {
+    const dx = p.sx - screenX, dy = p.sy - screenY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const r = p.sr + 4;
+    if (dist < r && dist < closestDist) {
+      closest = p.node; closestDist = dist;
+    }
+  }
+  return closest;
+}
+
+// ---- orbit (drag empty space rotates the whole system around the fixed anchor) + zoom (wheel dollies) ----
+let isOrbiting = false;
+let orbitDragDistance = 0;
+let orbitStartClient = { x: 0, y: 0 };
+let orbitStartCamera = { yaw: 0, pitch: 0 };
+
+canvas.addEventListener('mousedown', (e) => {
+  if (nodeAt(e.offsetX, e.offsetY)) return; // let click handle focus toggling on a node
+  isOrbiting = true;
+  orbitDragDistance = 0;
+  orbitStartClient = { x: e.clientX, y: e.clientY };
+  orbitStartCamera = { yaw: camera.yaw, pitch: camera.pitch };
+  canvas.style.cursor = 'grabbing';
+  tooltip.style.display = 'none';
+});
+
+window.addEventListener('mousemove', (e) => {
+  if (!isOrbiting) return;
+  const dx = e.clientX - orbitStartClient.x, dy = e.clientY - orbitStartClient.y;
+  orbitDragDistance = Math.max(orbitDragDistance, Math.hypot(dx, dy));
+  camera.yaw = orbitStartCamera.yaw - dx * 0.006;
+  camera.pitch = Math.min(1.4, Math.max(-1.4, orbitStartCamera.pitch + dy * 0.006));
+});
+
+window.addEventListener('mouseup', () => {
+  if (isOrbiting) canvas.style.cursor = 'grab';
+  isOrbiting = false;
+});
+
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const factor = Math.exp(-e.deltaY * 0.001);
+  camera.dist = Math.min(1600, Math.max(120, camera.dist / factor));
+}, { passive: false });
+
+canvas.addEventListener('mousemove', (e) => {
+  if (isOrbiting) { tooltip.style.display = 'none'; return; }
+  const node = nodeAt(e.offsetX, e.offsetY);
+  hoverId = node ? node.id : null;
+  if (node) {
+    const ago = timeAgo(Date.now() - node.mtime);
+    tooltip.innerHTML = `<div>${node.label}</div><div class="folder">${node.folder} · edited ${ago}</div>`;
+    tooltip.style.display = 'block';
+    tooltip.style.left = (e.clientX + 14) + 'px';
+    tooltip.style.top = (e.clientY + 14) + 'px';
+  } else {
+    tooltip.style.display = 'none';
+  }
+});
+
+canvas.addEventListener('click', (e) => {
+  if (orbitDragDistance > 5) { orbitDragDistance = 0; return; }
+  const node = nodeAt(e.offsetX, e.offsetY);
+  focusId = node ? (node.id === focusId ? null : node.id) : null;
+});
+
+function timeAgo(ms) {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+function loop() {
+  step();
+  draw();
+  updateLegendGlow();
+  requestAnimationFrame(loop);
+}
+
+poll();
+pollActivity();
+loop();
+</script>
+</body>
+</html>
