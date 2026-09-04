@@ -407,36 +407,49 @@ function updateLegendGlow() {
 // ---- orbit camera: drag rotates the whole system around the fixed anchor, wheel dollies in/out ----
 const camera = { yaw: 0, pitch: 0.35, dist: 420 };
 
-// programmatic "fly to" for the folder inspector (drag/wheel orbit above is
-// user-driven and untouched; this eases the same camera.yaw/pitch/dist
-// fields to a computed target over time). Any manual drag or scroll cancels
-// an in-flight animation rather than fighting it - see the mousedown/wheel
-// listeners below.
-let cameraAnim = null; // {startYaw,startPitch,startDist,targetYaw,targetPitch,targetDist,startTime,duration}
+// Folder-inspector camera tracking (drag/wheel orbit above is user-driven
+// and untouched). Rather than a one-shot animation to a target computed
+// once at click time, this recomputes the ideal yaw/pitch/dist from LIVE
+// node positions every frame and eases camera.* toward it a little each
+// tick. That matters because a newly-focused folder's nodes may still be
+// mid-flight from their initial spawn-shell positions (see applyGraph's
+// "spawn on a shell around the origin" comment) toward wherever gravity
+// actually settles them - a one-shot target locked in from that transient,
+// not-yet-clustered snapshot looked like a wrong, zoomed-way-out camera
+// that never corrected itself. Continuous tracking self-corrects as the
+// simulation converges instead of freezing on a bad first guess. Any
+// manual drag or scroll stops tracking rather than fighting it - see the
+// mousedown/wheel listeners below.
+let folderTracking = false;
 
-function easeInOutCubic(t) {
-  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-}
-
-function flyCameraTo(targetYaw, targetPitch, targetDist, duration = 700) {
-  cameraAnim = {
-    startYaw: camera.yaw, startPitch: camera.pitch, startDist: camera.dist,
-    targetYaw, targetPitch, targetDist,
-    startTime: Date.now(), duration,
+function folderCameraTarget(key) {
+  const notes = notesForFolderKey(key);
+  if (!notes.length) return null;
+  let cx = 0, cy = 0, cz = 0;
+  notes.forEach(n => { cx += n.x; cy += n.y; cz += n.z; });
+  cx /= notes.length; cy /= notes.length; cz /= notes.length;
+  let maxR = 0;
+  notes.forEach(n => { maxR = Math.max(maxR, Math.hypot(n.x - cx, n.y - cy, n.z - cz)); });
+  return {
+    // solve for the yaw/pitch that puts (cx,cy,cz) on-axis under project()'s
+    // own yaw-then-pitch rotation, so the cluster centers on screen
+    yaw: Math.atan2(-cx, cz),
+    pitch: Math.min(1.4, Math.max(-1.4, Math.atan2(cy, Math.hypot(cx, cz)))),
+    dist: Math.min(900, Math.max(150, maxR * 2.6 + 120)),
   };
 }
 
-function updateCameraAnim() {
-  if (!cameraAnim) return;
-  const t = Math.min(1, (Date.now() - cameraAnim.startTime) / cameraAnim.duration);
-  const e = easeInOutCubic(t);
-  // shortest angular path, so a fly-to never spins the long way around
-  let dyaw = cameraAnim.targetYaw - cameraAnim.startYaw;
+function updateFolderTracking() {
+  if (!folderTracking || !folderFocusId) return;
+  const target = folderCameraTarget(folderFocusId);
+  if (!target) return;
+  // shortest angular path, so tracking never spins the long way around
+  let dyaw = target.yaw - camera.yaw;
   dyaw = ((dyaw + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
-  camera.yaw = cameraAnim.startYaw + dyaw * e;
-  camera.pitch = cameraAnim.startPitch + (cameraAnim.targetPitch - cameraAnim.startPitch) * e;
-  camera.dist = cameraAnim.startDist + (cameraAnim.targetDist - cameraAnim.startDist) * e;
-  if (t >= 1) cameraAnim = null;
+  const k = 0.08; // per-frame follow rate — gentle, not an instant snap
+  camera.yaw += dyaw * k;
+  camera.pitch += (target.pitch - camera.pitch) * k;
+  camera.dist += (target.dist - camera.dist) * k;
 }
 const FOCAL = 420;
 
@@ -778,31 +791,25 @@ function notesForFolderKey(key) {
   return key === 'Other' ? all.filter(n => n.slot === -1) : all.filter(n => n.folder === key);
 }
 
+// true when no folder is focused (nothing dimmed for this reason) or the
+// given node belongs to the currently-focused folder
+function inFocusedFolder(node) {
+  if (!folderFocusId) return true;
+  return folderFocusId === 'Other' ? node.slot === -1 : node.folder === folderFocusId;
+}
+
 function focusFolder(key) {
   if (folderFocusId === key) { closeFolderPanel(); return; }
   const notes = notesForFolderKey(key);
   if (!notes.length) return;
   folderFocusId = key;
+  folderTracking = true;
   renderFolderPanel(key, notes);
-
-  let cx = 0, cy = 0, cz = 0;
-  notes.forEach(n => { cx += n.x; cy += n.y; cz += n.z; });
-  cx /= notes.length; cy /= notes.length; cz /= notes.length;
-
-  let maxR = 0;
-  notes.forEach(n => { maxR = Math.max(maxR, Math.hypot(n.x - cx, n.y - cy, n.z - cz)); });
-
-  // solve for the yaw/pitch that puts (cx,cy,cz) on-axis under project()'s
-  // own yaw-then-pitch rotation, so the cluster centers on screen
-  const targetYaw = Math.atan2(-cx, cz);
-  const targetPitch = Math.min(1.4, Math.max(-1.4, Math.atan2(cy, Math.hypot(cx, cz))));
-  const targetDist = Math.min(900, Math.max(150, maxR * 2.6 + 120));
-
-  flyCameraTo(targetYaw, targetPitch, targetDist);
 }
 
 function closeFolderPanel() {
   folderFocusId = null;
+  folderTracking = false;
   folderPanel.classList.remove('open');
   document.querySelectorAll('#legend-rows .row').forEach(r => r.classList.remove('folder-active'));
 }
@@ -930,8 +937,9 @@ function draw() {
   for (const e of edges) {
     const a = byId.get(e.source), b = byId.get(e.target);
     if (!a || !b) continue;
-    const dimmed = neighbors && !(neighbors.has(e.source) && neighbors.has(e.target)) &&
-                   !(e.source === focusId || e.target === focusId);
+    const dimmed = (neighbors && !(neighbors.has(e.source) && neighbors.has(e.target)) &&
+                   !(e.source === focusId || e.target === focusId)) ||
+                   !inFocusedFolder(a.node) || !inFocusedFolder(b.node);
 
     // activity echo: a touched note's edges brighten (and, for writes,
     // thicken) with the same read/write color language as the node pulses,
@@ -982,7 +990,7 @@ function draw() {
   for (const p of projected) {
     const node = p.node;
     const r = p.sr;
-    const dimmed = neighbors && node.id !== focusId && !neighbors.has(node.id);
+    const dimmed = (neighbors && node.id !== focusId && !neighbors.has(node.id)) || !inFocusedFolder(node);
     const color = colorForSlot(node.slot);
 
     // recency glow: soft white halo, fades out over 90s
@@ -1169,7 +1177,7 @@ let orbitStartCamera = { yaw: 0, pitch: 0 };
 
 canvas.addEventListener('mousedown', (e) => {
   if (nodeAt(e.offsetX, e.offsetY)) return; // let click handle focus toggling on a node
-  cameraAnim = null; // manual orbit takes over from wherever a fly-to currently is
+  folderTracking = false; // manual orbit takes over from wherever tracking currently is
   isOrbiting = true;
   orbitDragDistance = 0;
   orbitStartClient = { x: e.clientX, y: e.clientY };
@@ -1193,7 +1201,7 @@ window.addEventListener('mouseup', () => {
 
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
-  cameraAnim = null; // manual zoom takes over from wherever a fly-to currently is
+  folderTracking = false; // manual zoom takes over from wherever tracking currently is
   const factor = Math.exp(-e.deltaY * 0.001);
   camera.dist = Math.min(1600, Math.max(120, camera.dist / factor));
 }, { passive: false });
@@ -1231,7 +1239,7 @@ function timeAgo(ms) {
 
 function loop() {
   step();
-  updateCameraAnim();
+  updateFolderTracking();
   draw();
   updateLegendGlow();
   requestAnimationFrame(loop);
