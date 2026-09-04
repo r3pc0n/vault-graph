@@ -8,7 +8,7 @@ No build step, no framework, no dependencies beyond the Python standard library.
 
 - **3D force-directed layout**: the highest-degree note is pinned as a gravitational anchor; every other note orbits it under real inverse-square gravity plus a slow swirl, so the whole graph settles into something that reads as a small galaxy instead of a static tree.
 - **Orbit camera**: click-drag empty space to rotate around the anchor, scroll to zoom, real perspective (farther notes shrink and occlude correctly).
-- **Folder inspector**: click a folder in the legend to fly the camera in on that folder's cluster and pop open a panel listing its notes — the rest of the graph fades so the selected folder is unambiguous. Click a note in the list to focus it; click the folder again (or the panel's ×) to close.
+- **Folder inspector**: click a folder in the legend to fly the camera in on that folder's cluster and pop open a panel listing its notes — the rest of the graph fades so the selected folder is unambiguous. Click a note in the list to focus it, or its open-in-Obsidian icon to jump straight to editing it there; click the folder again (or the panel's ×) to close.
 - **Folder-color legend**: the first 8 top-level folders get distinct colors; everything else (including root-level notes) folds into a shared "Other" bucket.
 - **30 color themes**: a built-in default plus 29 real Omarchy palettes (Nord, Gruvbox, Catppuccin, Rosé Pine, and more), picked from the menu and persisted per-browser — no restart needed, no config file to edit.
 - **Recency glow**: a note that changed in the last 90 seconds gets a soft white halo, decaying over time — works from file mtimes alone, no extra plumbing required.
@@ -37,6 +37,8 @@ Edit `vault-graph.json`:
   "port": 8792
 }
 ```
+
+Optional: `"obsidian_vault_name"` — needed only for the "open in Obsidian" links in the folder panel (see below). Obsidian identifies a vault by its *registered name*, not its folder path, and the two are usually but not always the same; this defaults to the vault folder's own name if omitted, which covers most setups. Set it explicitly if you renamed your vault inside Obsidian.
 
 Then run it:
 

@@ -22,6 +22,12 @@ VAULT_DIR = CONFIG["vault_dir"]
 PORT = CONFIG["port"]
 VAULT_DIR_NORM = os.path.normpath(VAULT_DIR)
 
+# Optional: only needed for the "open in Obsidian" links, which use
+# obsidian://open?vault=<name>&file=<path> - Obsidian identifies a vault by
+# its registered NAME, not its filesystem path, and the two usually but not
+# always match. Falls back to the folder's own basename, the common case.
+OBSIDIAN_VAULT_NAME = CONFIG.get("obsidian_vault_name") or os.path.basename(VAULT_DIR_NORM)
+
 WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)")
 SKIP_DIRS = {".obsidian", ".git"}
 
@@ -170,6 +176,7 @@ def _build_graph():
         "nodes": nodes,
         "edges": edges,
         "folders": [f for i, f in enumerate(folder_order) if i < 8],
+        "vault_name": OBSIDIAN_VAULT_NAME,
         "generated_at": int(__import__("time").time() * 1000),
     }
 

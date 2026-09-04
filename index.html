@@ -222,7 +222,14 @@
     color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .folder-note-row:hover .folder-note-label { color: var(--text-primary); }
-  .folder-note-meta { flex: none; color: var(--text-muted); font-size: 10px; white-space: nowrap; }
+  .folder-note-right { flex: none; display: flex; align-items: center; gap: 6px; }
+  .folder-note-meta { color: var(--text-muted); font-size: 10px; white-space: nowrap; }
+  .folder-note-obsidian {
+    display: flex; align-items: center; justify-content: center;
+    width: 14px; height: 14px; color: var(--text-muted);
+  }
+  .folder-note-obsidian:hover { color: var(--text-primary); }
+  .folder-note-obsidian svg { width: 12px; height: 12px; stroke: currentColor; }
 </style>
 </head>
 <body>
@@ -317,6 +324,7 @@ document.getElementById('legend-rows').addEventListener('click', (e) => {
 });
 
 document.getElementById('folder-panel-notes').addEventListener('click', (e) => {
+  if (e.target.closest('a')) return; // let the obsidian:// link handle its own click
   const row = e.target.closest('.folder-note-row');
   if (!row) return;
   focusId = row.dataset.id === focusId ? null : row.dataset.id;
@@ -1051,6 +1059,7 @@ initThemeSelect();
 let nodesById = new Map();   // id -> {id,label,folder,slot,mtime,degree,x,y,z,vx,vy,vz}
 let edges = [];              // [{source,target}] (ids)
 let folders = [];
+let VAULT_NAME = '';         // Obsidian's registered vault name, for "open in Obsidian" links
 let focusId = null;
 let hoverId = null;
 let folderFocusId = null;    // legend folder key with an open inspector panel ("Other" included)
@@ -1406,6 +1415,7 @@ function applyActivityToNode(node, ev) {
 
 function applyGraph(data) {
   folders = data.folders;
+  if (data.vault_name) VAULT_NAME = data.vault_name;
   const incomingIds = new Set(data.nodes.map(n => n.id));
 
   // drop nodes that no longer exist
@@ -1521,6 +1531,17 @@ function closeFolderPanel() {
   document.querySelectorAll('#legend-rows .row').forEach(r => r.classList.remove('folder-active'));
 }
 
+// obsidian://open needs the vault's registered NAME (see VAULT_NAME) and the
+// note's path relative to the vault root, without the .md extension.
+function obsidianUrl(noteId) {
+  const path = noteId.replace(/\.md$/, '');
+  return `obsidian://open?vault=${encodeURIComponent(VAULT_NAME)}&file=${encodeURIComponent(path)}`;
+}
+const ICON_OBSIDIAN = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+  '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>' +
+  '<polyline points="15 3 21 3 21 9"></polyline>' +
+  '<line x1="10" y1="14" x2="21" y2="3"></line></svg>';
+
 function renderFolderPanel(key, notes) {
   document.getElementById('folder-panel-title').textContent = key;
   document.getElementById('folder-panel-meta').textContent =
@@ -1534,7 +1555,10 @@ function renderFolderPanel(key, notes) {
     row.dataset.id = n.id;
     const ago = timeAgo(Date.now() - n.mtime);
     row.innerHTML = `<span class="folder-note-label">${n.label}</span>` +
-      `<span class="folder-note-meta">${showFolder ? n.folder + ' · ' : ''}${ago}</span>`;
+      `<span class="folder-note-right">` +
+        `<span class="folder-note-meta">${showFolder ? n.folder + ' · ' : ''}${ago}</span>` +
+        `<a class="folder-note-obsidian" href="${obsidianUrl(n.id)}" title="Open in Obsidian" aria-label="Open ${n.label} in Obsidian">${ICON_OBSIDIAN}</a>` +
+      `</span>`;
     list.appendChild(row);
   });
   folderPanel.classList.add('open');
