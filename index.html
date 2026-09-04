@@ -25,6 +25,13 @@
 
     --activity-read:  #4fc3ff; /* cool blue - read pulse */
     --activity-write: #ff8a3d; /* warm amber - write flash/ring */
+
+    /* deliberately NOT part of the theme picker below - read/write are a
+       functional signal, not decoration, and letting them drift into an
+       arbitrary palette (e.g. green-on-green) would make them hard to tell
+       apart. Still just plain vars, easy to hand-tune directly. */
+    --bg-gradient-center: #0c0c17;
+    --bg-gradient-edge:   #020203;
   }
   * { box-sizing: border-box; }
   html, body {
@@ -115,6 +122,20 @@
   #labels-toggle .menu-icon { font-size: 9px; }
   .menu-label { flex: 1; }
   .menu-state { flex: none; color: var(--text-muted); font-size: 11px; }
+  .theme-row { cursor: default; }
+  .theme-row:hover { background: transparent; }
+  .menu-select {
+    flex: none;
+    max-width: 120px;
+    background: transparent;
+    border: 0;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .menu-select:hover, .menu-select:focus { color: var(--text-primary); }
+  .menu-select option { background: var(--surface-1); color: var(--text-primary); }
   .section-label {
     margin: 0 0 4px;
     color: var(--text-muted);
@@ -208,6 +229,11 @@
     <button class="menu-row" id="labels-toggle" type="button" aria-label="Hide note labels" aria-pressed="false">
       <span class="menu-icon">Aa</span><span class="menu-label">Labels</span><span class="menu-state">On</span>
     </button>
+    <div class="menu-row theme-row">
+      <span class="menu-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path></svg></span>
+      <span class="menu-label">Theme</span>
+      <select id="theme-select" class="menu-select" aria-label="Color theme"></select>
+    </div>
   </div>
   <div class="section-label">Folders</div>
   <div id="legend-rows"></div>
@@ -224,19 +250,33 @@
 </div>
 
 <script>
-const PALETTE = [
-  getVar('--series-1'), getVar('--series-2'), getVar('--series-3'), getVar('--series-4'),
-  getVar('--series-5'), getVar('--series-6'), getVar('--series-7'), getVar('--series-8'),
-];
-const OTHER_COLOR = getVar('--other');
-const GRIDLINE = getVar('--gridline');
-const TEXT_SECONDARY = getVar('--text-secondary');
-const TEXT_MUTED = getVar('--text-muted');
+// mutable (not const): a theme switch re-reads all of these from the DOM's
+// current --custom-properties, since the canvas below only ever bakes in
+// literal color values at draw time rather than reading CSS live itself -
+// see refreshThemeColors()/applyTheme() further down.
+let PALETTE = [];
+let OTHER_COLOR, GRIDLINE, TEXT_SECONDARY, TEXT_MUTED;
+
+// read/write pulse colors are deliberately NOT part of the theme picker -
+// see the --activity-read/--activity-write comment in <style> - so these
+// stay const, read once like before.
 const ACTIVITY_READ_COLOR = getVar('--activity-read');
 const ACTIVITY_WRITE_COLOR = getVar('--activity-write');
 
 function getVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+function refreshThemeColors() {
+  PALETTE = [
+    getVar('--series-1'), getVar('--series-2'), getVar('--series-3'), getVar('--series-4'),
+    getVar('--series-5'), getVar('--series-6'), getVar('--series-7'), getVar('--series-8'),
+  ];
+  OTHER_COLOR = getVar('--other');
+  GRIDLINE = getVar('--gridline');
+  TEXT_SECONDARY = getVar('--text-secondary');
+  TEXT_MUTED = getVar('--text-muted');
+  buildBgGradient();
 }
 
 const canvas = document.getElementById('graph');
@@ -338,19 +378,666 @@ soundToggle.addEventListener('click', () => {
 
 // Soft radial gradient instead of a flat fill, so the sky reads with a
 // little depth (a faint glow toward center, deepening toward the edges)
-// rather than a single uniform black plane. Rebuilt only on resize, not
-// per frame, since it depends solely on canvas dimensions.
+// rather than a single uniform black plane. Rebuilt on resize (canvas
+// dimensions changed) and on every theme switch (colors changed) - not
+// per frame, both are cheap, infrequent events.
 let bgGradient;
+function buildBgGradient() {
+  const cx = canvas.width / 2, cy = canvas.height / 2;
+  bgGradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.hypot(cx, cy));
+  bgGradient.addColorStop(0, getVar('--bg-gradient-center'));
+  bgGradient.addColorStop(1, getVar('--bg-gradient-edge'));
+}
 function resize() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
-  const cx = canvas.width / 2, cy = canvas.height / 2;
-  bgGradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.hypot(cx, cy));
-  bgGradient.addColorStop(0, '#0c0c17');
-  bgGradient.addColorStop(1, '#020203');
+  buildBgGradient();
 }
 window.addEventListener('resize', resize);
 resize();
+
+const THEMES = {
+  "Default": {
+    "page-plane": "#050507",
+    "surface-1": "#07070b",
+    "text-primary": "#ffffff",
+    "text-secondary": "#c3c2b7",
+    "text-muted": "#898781",
+    "gridline": "#2c2c2a",
+    "other": "#6b6a65",
+    "series-1": "#3987e5",
+    "series-2": "#d95926",
+    "series-3": "#199e70",
+    "series-4": "#c98500",
+    "series-5": "#d55181",
+    "series-6": "#008300",
+    "series-7": "#9085e9",
+    "series-8": "#e66767",
+    "bg-gradient-center": "#0c0c17",
+    "bg-gradient-edge": "#020203",
+  },
+  "atelier": {
+    "bg-gradient-center": "#383832",
+    "bg-gradient-edge": "#22221b",
+    "gridline": "#36a166",
+    "other": "#36a166",
+    "page-plane": "#22221b",
+    "series-1": "#36a166",
+    "series-2": "#36a166",
+    "series-3": "#5b9d48",
+    "series-4": "#a5980d",
+    "series-5": "#9d6c7c",
+    "series-6": "#7d9726",
+    "series-7": "#9d6c7c",
+    "series-8": "#ba6236",
+    "surface-1": "#22221b",
+    "text-muted": "#36a166",
+    "text-primary": "#dcd9d6",
+    "text-secondary": "#dcd9d6",
+  },
+  "batou": {
+    "bg-gradient-center": "#2a2a2a",
+    "bg-gradient-edge": "#121212",
+    "gridline": "#605d5b",
+    "other": "#605d5b",
+    "page-plane": "#121212",
+    "series-1": "#605d5b",
+    "series-2": "#605d5b",
+    "series-3": "#c2bbb0",
+    "series-4": "#c6c4b0",
+    "series-5": "#8a8575",
+    "series-6": "#a5a297",
+    "series-7": "#8a8575",
+    "series-8": "#e19e74",
+    "surface-1": "#121212",
+    "text-muted": "#605d5b",
+    "text-primary": "#a4a4a4",
+    "text-secondary": "#a4a4a4",
+  },
+  "bauhaus": {
+    "bg-gradient-center": "#282b2f",
+    "bg-gradient-edge": "#101318",
+    "gridline": "#8999aa",
+    "other": "#8999aa",
+    "page-plane": "#101318",
+    "series-1": "#8999aa",
+    "series-2": "#8999aa",
+    "series-3": "#809d9e",
+    "series-4": "#e7a46f",
+    "series-5": "#8d758f",
+    "series-6": "#789fa2",
+    "series-7": "#8d758f",
+    "series-8": "#cb886d",
+    "surface-1": "#101318",
+    "text-muted": "#8999aa",
+    "text-primary": "#eaeff5",
+    "text-secondary": "#eaeff5",
+  },
+  "catppuccin": {
+    "bg-gradient-center": "#343443",
+    "bg-gradient-edge": "#1e1e2e",
+    "gridline": "#89b4fa",
+    "other": "#89b4fa",
+    "page-plane": "#1e1e2e",
+    "series-1": "#89b4fa",
+    "series-2": "#89b4fa",
+    "series-3": "#94e2d5",
+    "series-4": "#f9e2af",
+    "series-5": "#f5c2e7",
+    "series-6": "#a6e3a1",
+    "series-7": "#f5c2e7",
+    "series-8": "#f38ba8",
+    "surface-1": "#1e1e2e",
+    "text-muted": "#89b4fa",
+    "text-primary": "#cdd6f4",
+    "text-secondary": "#cdd6f4",
+  },
+  "catppuccin-latte": {
+    "bg-gradient-center": "#f1f2f6",
+    "bg-gradient-edge": "#eff1f5",
+    "gridline": "#1e66f5",
+    "other": "#1e66f5",
+    "page-plane": "#eff1f5",
+    "series-1": "#1e66f5",
+    "series-2": "#1e66f5",
+    "series-3": "#179299",
+    "series-4": "#df8e1d",
+    "series-5": "#ea76cb",
+    "series-6": "#40a02b",
+    "series-7": "#ea76cb",
+    "series-8": "#d20f39",
+    "surface-1": "#eff1f5",
+    "text-muted": "#1e66f5",
+    "text-primary": "#4c4f69",
+    "text-secondary": "#4c4f69",
+  },
+  "ethereal": {
+    "bg-gradient-center": "#1f2334",
+    "bg-gradient-edge": "#060b1e",
+    "gridline": "#7d82d9",
+    "other": "#7d82d9",
+    "page-plane": "#060b1e",
+    "series-1": "#7d82d9",
+    "series-2": "#7d82d9",
+    "series-3": "#a3bfd1",
+    "series-4": "#e9bb4f",
+    "series-5": "#c89dc1",
+    "series-6": "#92a593",
+    "series-7": "#c89dc1",
+    "series-8": "#ed5b5a",
+    "surface-1": "#060b1e",
+    "text-muted": "#7d82d9",
+    "text-primary": "#ffcead",
+    "text-secondary": "#ffcead",
+  },
+  "everforest": {
+    "bg-gradient-center": "#42494f",
+    "bg-gradient-edge": "#2d353b",
+    "gridline": "#7fbbb3",
+    "other": "#7fbbb3",
+    "page-plane": "#2d353b",
+    "series-1": "#7fbbb3",
+    "series-2": "#7fbbb3",
+    "series-3": "#83c092",
+    "series-4": "#dbbc7f",
+    "series-5": "#d699b6",
+    "series-6": "#a7c080",
+    "series-7": "#d699b6",
+    "series-8": "#e67e80",
+    "surface-1": "#2d353b",
+    "text-muted": "#7fbbb3",
+    "text-primary": "#d3c6aa",
+    "text-secondary": "#d3c6aa",
+  },
+  "flexoki-light": {
+    "bg-gradient-center": "#fffcf2",
+    "bg-gradient-edge": "#fffcf0",
+    "gridline": "#205ea6",
+    "other": "#205ea6",
+    "page-plane": "#fffcf0",
+    "series-1": "#205ea6",
+    "series-2": "#205ea6",
+    "series-3": "#3aa99f",
+    "series-4": "#d0a215",
+    "series-5": "#ce5d97",
+    "series-6": "#879a39",
+    "series-7": "#ce5d97",
+    "series-8": "#d14d41",
+    "surface-1": "#fffcf0",
+    "text-muted": "#205ea6",
+    "text-primary": "#100f0f",
+    "text-secondary": "#100f0f",
+  },
+  "greek-noir": {
+    "bg-gradient-center": "#2e2e2e",
+    "bg-gradient-edge": "#171717",
+    "gridline": "#f25623",
+    "other": "#f25623",
+    "page-plane": "#171717",
+    "series-1": "#88a57d",
+    "series-2": "#f25623",
+    "series-3": "#7b837b",
+    "series-4": "#757864",
+    "series-5": "#f56e0f",
+    "series-6": "#f25623",
+    "series-7": "#f56e0f",
+    "series-8": "#aeab94",
+    "surface-1": "#171717",
+    "text-muted": "#f25623",
+    "text-primary": "#ccd0cf",
+    "text-secondary": "#ccd0cf",
+  },
+  "gruvbox": {
+    "bg-gradient-center": "#3e3e3e",
+    "bg-gradient-edge": "#282828",
+    "gridline": "#7daea3",
+    "other": "#7daea3",
+    "page-plane": "#282828",
+    "series-1": "#7daea3",
+    "series-2": "#7daea3",
+    "series-3": "#89b482",
+    "series-4": "#d8a657",
+    "series-5": "#d3869b",
+    "series-6": "#a9b665",
+    "series-7": "#d3869b",
+    "series-8": "#ea6962",
+    "surface-1": "#282828",
+    "text-muted": "#7daea3",
+    "text-primary": "#d4be98",
+    "text-secondary": "#d4be98",
+  },
+  "gruvbox-material": {
+    "bg-gradient-center": "#3e3e3e",
+    "bg-gradient-edge": "#282828",
+    "gridline": "#e78a4e",
+    "other": "#e78a4e",
+    "page-plane": "#282828",
+    "series-1": "#7daea3",
+    "series-2": "#e78a4e",
+    "series-3": "#89b482",
+    "series-4": "#d8a657",
+    "series-5": "#d3869b",
+    "series-6": "#a9b665",
+    "series-7": "#d3869b",
+    "series-8": "#ea6962",
+    "surface-1": "#282828",
+    "text-muted": "#e78a4e",
+    "text-primary": "#d4be98",
+    "text-secondary": "#d4be98",
+  },
+  "hackerman": {
+    "bg-gradient-center": "#23242d",
+    "bg-gradient-edge": "#0b0c16",
+    "gridline": "#82fb9c",
+    "other": "#82fb9c",
+    "page-plane": "#0b0c16",
+    "series-1": "#829dd4",
+    "series-2": "#82fb9c",
+    "series-3": "#7cf8f7",
+    "series-4": "#50f7d4",
+    "series-5": "#86a7df",
+    "series-6": "#4fe88f",
+    "series-7": "#86a7df",
+    "series-8": "#50f872",
+    "surface-1": "#0b0c16",
+    "text-muted": "#82fb9c",
+    "text-primary": "#ddf7ff",
+    "text-secondary": "#ddf7ff",
+  },
+  "kanagawa": {
+    "bg-gradient-center": "#35353e",
+    "bg-gradient-edge": "#1f1f28",
+    "gridline": "#dcd7ba",
+    "other": "#dcd7ba",
+    "page-plane": "#1f1f28",
+    "series-1": "#7e9cd8",
+    "series-2": "#dcd7ba",
+    "series-3": "#6a9589",
+    "series-4": "#c0a36e",
+    "series-5": "#957fb8",
+    "series-6": "#76946a",
+    "series-7": "#957fb8",
+    "series-8": "#c34043",
+    "surface-1": "#1f1f28",
+    "text-muted": "#dcd7ba",
+    "text-primary": "#dcd7ba",
+    "text-secondary": "#dcd7ba",
+  },
+  "last-horizon": {
+    "bg-gradient-center": "#242324",
+    "bg-gradient-edge": "#0c0b0c",
+    "gridline": "#b59790",
+    "other": "#b59790",
+    "page-plane": "#0c0b0c",
+    "series-1": "#b59790",
+    "series-2": "#b59790",
+    "series-3": "#a5a0b6",
+    "series-4": "#6b5e73",
+    "series-5": "#c4d8e2",
+    "series-6": "#87a9b0",
+    "series-7": "#c4d8e2",
+    "series-8": "#c38b7b",
+    "surface-1": "#0c0b0c",
+    "text-muted": "#b59790",
+    "text-primary": "#fafcfb",
+    "text-secondary": "#fafcfb",
+  },
+  "lumon": {
+    "bg-gradient-center": "#2d3a42",
+    "bg-gradient-edge": "#16242d",
+    "gridline": "#8bc9eb",
+    "other": "#8bc9eb",
+    "page-plane": "#16242d",
+    "series-1": "#6fb8e3",
+    "series-2": "#8bc9eb",
+    "series-3": "#b4e4f6",
+    "series-4": "#6fa4c9",
+    "series-5": "#8bc9eb",
+    "series-6": "#5e95bc",
+    "series-7": "#8bc9eb",
+    "series-8": "#4d86b0",
+    "surface-1": "#16242d",
+    "text-muted": "#8bc9eb",
+    "text-primary": "#d6e2ee",
+    "text-secondary": "#d6e2ee",
+  },
+  "lupine": {
+    "bg-gradient-center": "#fafafa",
+    "bg-gradient-edge": "#fafafa",
+    "gridline": "#3264eb",
+    "other": "#3264eb",
+    "page-plane": "#fafafa",
+    "series-1": "#3264eb",
+    "series-2": "#3264eb",
+    "series-3": "#0c67de",
+    "series-4": "#026fde",
+    "series-5": "#8a4ad7",
+    "series-6": "#4a2fd0",
+    "series-7": "#8a4ad7",
+    "series-8": "#c900c4",
+    "surface-1": "#fafafa",
+    "text-muted": "#3264eb",
+    "text-primary": "#212121",
+    "text-secondary": "#212121",
+  },
+  "matrix": {
+    "bg-gradient-center": "#212422",
+    "bg-gradient-edge": "#080c09",
+    "gridline": "#3cbf5c",
+    "other": "#3cbf5c",
+    "page-plane": "#080c09",
+    "series-1": "#3d8f68",
+    "series-2": "#3cbf5c",
+    "series-3": "#4bb56a",
+    "series-4": "#b8ba48",
+    "series-5": "#5a7a58",
+    "series-6": "#2d9a48",
+    "series-7": "#5a7a58",
+    "series-8": "#a83a3a",
+    "surface-1": "#080c09",
+    "text-muted": "#3cbf5c",
+    "text-primary": "#8bc98c",
+    "text-secondary": "#8bc98c",
+  },
+  "matte-black": {
+    "bg-gradient-center": "#2a2a2a",
+    "bg-gradient-edge": "#121212",
+    "gridline": "#e68e0d",
+    "other": "#e68e0d",
+    "page-plane": "#121212",
+    "series-1": "#e68e0d",
+    "series-2": "#e68e0d",
+    "series-3": "#bebebe",
+    "series-4": "#b91c1c",
+    "series-5": "#d35f5f",
+    "series-6": "#ffc107",
+    "series-7": "#d35f5f",
+    "series-8": "#d35f5f",
+    "surface-1": "#121212",
+    "text-muted": "#e68e0d",
+    "text-primary": "#bebebe",
+    "text-secondary": "#bebebe",
+  },
+  "mechanoonna": {
+    "bg-gradient-center": "#333230",
+    "bg-gradient-edge": "#1c1b19",
+    "gridline": "#d4bd99",
+    "other": "#d4bd99",
+    "page-plane": "#1c1b19",
+    "series-1": "#908d88",
+    "series-2": "#d4bd99",
+    "series-3": "#d4bd99",
+    "series-4": "#ebdbb2",
+    "series-5": "#afa499",
+    "series-6": "#a89984",
+    "series-7": "#afa499",
+    "series-8": "#c5564a",
+    "surface-1": "#1c1b19",
+    "text-muted": "#d4bd99",
+    "text-primary": "#f0e4c5",
+    "text-secondary": "#f0e4c5",
+  },
+  "miasma": {
+    "bg-gradient-center": "#383838",
+    "bg-gradient-edge": "#222222",
+    "gridline": "#78824b",
+    "other": "#78824b",
+    "page-plane": "#222222",
+    "series-1": "#78824b",
+    "series-2": "#78824b",
+    "series-3": "#c9a554",
+    "series-4": "#b36d43",
+    "series-5": "#bb7744",
+    "series-6": "#5f875f",
+    "series-7": "#bb7744",
+    "series-8": "#685742",
+    "surface-1": "#222222",
+    "text-muted": "#78824b",
+    "text-primary": "#c2c2b0",
+    "text-secondary": "#c2c2b0",
+  },
+  "nord": {
+    "bg-gradient-center": "#434853",
+    "bg-gradient-edge": "#2e3440",
+    "gridline": "#81a1c1",
+    "other": "#81a1c1",
+    "page-plane": "#2e3440",
+    "series-1": "#81a1c1",
+    "series-2": "#81a1c1",
+    "series-3": "#88c0d0",
+    "series-4": "#ebcb8b",
+    "series-5": "#b48ead",
+    "series-6": "#a3be8c",
+    "series-7": "#b48ead",
+    "series-8": "#bf616a",
+    "surface-1": "#2e3440",
+    "text-muted": "#81a1c1",
+    "text-primary": "#d8dee9",
+    "text-secondary": "#d8dee9",
+  },
+  "osaka-jade": {
+    "bg-gradient-center": "#29332f",
+    "bg-gradient-edge": "#111c18",
+    "gridline": "#509475",
+    "other": "#509475",
+    "page-plane": "#111c18",
+    "series-1": "#509475",
+    "series-2": "#509475",
+    "series-3": "#2dd5b7",
+    "series-4": "#459451",
+    "series-5": "#d2689c",
+    "series-6": "#549e6a",
+    "series-7": "#d2689c",
+    "series-8": "#ff5345",
+    "surface-1": "#111c18",
+    "text-muted": "#509475",
+    "text-primary": "#c1c497",
+    "text-secondary": "#c1c497",
+  },
+  "retro-82": {
+    "bg-gradient-center": "#1e2f43",
+    "bg-gradient-edge": "#05182e",
+    "gridline": "#faa968",
+    "other": "#faa968",
+    "page-plane": "#05182e",
+    "series-1": "#3f8f8a",
+    "series-2": "#faa968",
+    "series-3": "#8cbfb8",
+    "series-4": "#e97b3c",
+    "series-5": "#3f8f8a",
+    "series-6": "#028391",
+    "series-7": "#3f8f8a",
+    "series-8": "#f85525",
+    "surface-1": "#05182e",
+    "text-muted": "#faa968",
+    "text-primary": "#f6dcac",
+    "text-secondary": "#f6dcac",
+  },
+  "ristretto": {
+    "bg-gradient-center": "#413b3b",
+    "bg-gradient-edge": "#2c2525",
+    "gridline": "#f38d70",
+    "other": "#f38d70",
+    "page-plane": "#2c2525",
+    "series-1": "#f38d70",
+    "series-2": "#f38d70",
+    "series-3": "#85dacc",
+    "series-4": "#f9cc6c",
+    "series-5": "#a8a9eb",
+    "series-6": "#adda78",
+    "series-7": "#a8a9eb",
+    "series-8": "#fd6883",
+    "surface-1": "#2c2525",
+    "text-muted": "#f38d70",
+    "text-primary": "#e6d9db",
+    "text-secondary": "#e6d9db",
+  },
+  "rose-pine": {
+    "bg-gradient-center": "#faf5ef",
+    "bg-gradient-edge": "#faf4ed",
+    "gridline": "#56949f",
+    "other": "#56949f",
+    "page-plane": "#faf4ed",
+    "series-1": "#56949f",
+    "series-2": "#56949f",
+    "series-3": "#d7827e",
+    "series-4": "#ea9d34",
+    "series-5": "#907aa9",
+    "series-6": "#286983",
+    "series-7": "#907aa9",
+    "series-8": "#b4637a",
+    "surface-1": "#faf4ed",
+    "text-muted": "#56949f",
+    "text-primary": "#575279",
+    "text-secondary": "#575279",
+  },
+  "solitude": {
+    "bg-gradient-center": "#282b2c",
+    "bg-gradient-edge": "#101315",
+    "gridline": "#798186",
+    "other": "#798186",
+    "page-plane": "#101315",
+    "series-1": "#798186",
+    "series-2": "#798186",
+    "series-3": "#707070",
+    "series-4": "#d9dbdc",
+    "series-5": "#aeaeae",
+    "series-6": "#9fa5a9",
+    "series-7": "#aeaeae",
+    "series-8": "#565d60",
+    "surface-1": "#101315",
+    "text-muted": "#798186",
+    "text-primary": "#cacccc",
+    "text-secondary": "#cacccc",
+  },
+  "tokyo-night": {
+    "bg-gradient-center": "#31323c",
+    "bg-gradient-edge": "#1a1b26",
+    "gridline": "#7aa2f7",
+    "other": "#7aa2f7",
+    "page-plane": "#1a1b26",
+    "series-1": "#7aa2f7",
+    "series-2": "#7aa2f7",
+    "series-3": "#449dab",
+    "series-4": "#e0af68",
+    "series-5": "#ad8ee6",
+    "series-6": "#9ece6a",
+    "series-7": "#ad8ee6",
+    "series-8": "#f7768e",
+    "surface-1": "#1a1b26",
+    "text-muted": "#7aa2f7",
+    "text-primary": "#a9b1d6",
+    "text-secondary": "#a9b1d6",
+  },
+  "vantablack": {
+    "bg-gradient-center": "#1a1a1a",
+    "bg-gradient-edge": "#000000",
+    "gridline": "#8d8d8d",
+    "other": "#8d8d8d",
+    "page-plane": "#000000",
+    "series-1": "#8d8d8d",
+    "series-2": "#8d8d8d",
+    "series-3": "#b0b0b0",
+    "series-4": "#cecece",
+    "series-5": "#9b9b9b",
+    "series-6": "#b6b6b6",
+    "series-7": "#9b9b9b",
+    "series-8": "#a4a4a4",
+    "surface-1": "#000000",
+    "text-muted": "#8d8d8d",
+    "text-primary": "#ffffff",
+    "text-secondary": "#ffffff",
+  },
+  "white": {
+    "bg-gradient-center": "#ffffff",
+    "bg-gradient-edge": "#ffffff",
+    "gridline": "#6e6e6e",
+    "other": "#6e6e6e",
+    "page-plane": "#ffffff",
+    "series-1": "#1a1a1a",
+    "series-2": "#6e6e6e",
+    "series-3": "#3e3e3e",
+    "series-4": "#4a4a4a",
+    "series-5": "#2e2e2e",
+    "series-6": "#3a3a3a",
+    "series-7": "#2e2e2e",
+    "series-8": "#2a2a2a",
+    "surface-1": "#ffffff",
+    "text-muted": "#6e6e6e",
+    "text-primary": "#000000",
+    "text-secondary": "#000000",
+  },
+};
+
+const THEME_LABELS = {
+  "Default": "Default",
+  "atelier": "Atelier",
+  "batou": "Batou",
+  "bauhaus": "Bauhaus",
+  "catppuccin": "Catppuccin",
+  "catppuccin-latte": "Catppuccin Latte",
+  "ethereal": "Ethereal",
+  "everforest": "Everforest",
+  "flexoki-light": "Flexoki Light",
+  "greek-noir": "Greek Noir",
+  "gruvbox": "Gruvbox",
+  "gruvbox-material": "Gruvbox Material",
+  "hackerman": "Hackerman",
+  "kanagawa": "Kanagawa",
+  "last-horizon": "Last Horizon",
+  "lumon": "Lumon",
+  "lupine": "Lupine",
+  "matrix": "Matrix",
+  "matte-black": "Matte Black",
+  "mechanoonna": "Mechanoonna",
+  "miasma": "Miasma",
+  "nord": "Nord",
+  "osaka-jade": "Osaka Jade",
+  "retro-82": "Retro 82",
+  "ristretto": "Ristretto",
+  "rose-pine": "Rose Pine",
+  "solitude": "Solitude",
+  "tokyo-night": "Tokyo Night",
+  "vantablack": "Vantablack",
+  "white": "White",
+};
+
+const THEME_STORAGE_KEY = 'vault-graph-theme';
+let currentTheme = 'Default';
+
+function applyTheme(name) {
+  currentTheme = THEMES[name] ? name : 'Default';
+  const root = document.documentElement.style;
+  for (const [k, v] of Object.entries(THEMES[currentTheme])) {
+    root.setProperty('--' + k, v);
+  }
+  refreshThemeColors();
+  const select = document.getElementById('theme-select');
+  if (select && select.value !== currentTheme) select.value = currentTheme;
+  try { localStorage.setItem(THEME_STORAGE_KEY, currentTheme); } catch (e) {}
+}
+
+function initThemeSelect() {
+  const select = document.getElementById('theme-select');
+  for (const key of Object.keys(THEMES)) {
+    const opt = document.createElement('option');
+    opt.value = key;
+    opt.textContent = THEME_LABELS[key] || key;
+    select.appendChild(opt);
+  }
+  select.addEventListener('change', () => applyTheme(select.value));
+
+  let stored = 'Default';
+  try {
+    const s = localStorage.getItem(THEME_STORAGE_KEY);
+    if (s && THEMES[s]) stored = s;
+  } catch (e) {
+    // private window / storage blocked - fall back to Default
+  }
+  applyTheme(stored);
+}
+initThemeSelect();
+
 
 let nodesById = new Map();   // id -> {id,label,folder,slot,mtime,degree,x,y,z,vx,vy,vz}
 let edges = [];              // [{source,target}] (ids)
