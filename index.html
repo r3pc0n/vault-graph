@@ -76,43 +76,51 @@
     color: var(--text-primary);
   }
 
-  #labels-toggle {
-    position: fixed;
-    top: 14px; right: 14px;
-    width: 18px; height: 18px;
-    padding: 0;
+  #legend-menu {
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .menu-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    margin: 1px 0;
+    padding: 4px 4px;
     border: 0;
     border-radius: 4px;
     background: transparent;
-    color: var(--text-muted);
+    color: var(--text-secondary);
     cursor: pointer;
     font: inherit;
-    font-size: 9px;
-    line-height: 18px;
-    text-align: center;
+    font-size: 12px;
+    text-align: left;
   }
-  #labels-toggle:hover {
+  .menu-row:hover {
     background: var(--border);
     color: var(--text-primary);
   }
-  #sound-toggle {
-    position: fixed;
-    top: 14px; right: 40px;
-    width: 18px; height: 18px;
-    padding: 0;
-    border: 0;
-    border-radius: 4px;
-    background: transparent;
+  .menu-icon {
+    flex: none;
+    width: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     color: var(--text-muted);
-    cursor: pointer;
-    font: inherit;
     font-size: 11px;
-    line-height: 18px;
-    text-align: center;
   }
-  #sound-toggle:hover {
-    background: var(--border);
-    color: var(--text-primary);
+  .menu-row:hover .menu-icon { color: var(--text-primary); }
+  .menu-icon svg { width: 14px; height: 14px; stroke: currentColor; }
+  #labels-toggle .menu-icon { font-size: 9px; }
+  .menu-label { flex: 1; }
+  .menu-state { flex: none; color: var(--text-muted); font-size: 11px; }
+  .section-label {
+    margin: 0 0 4px;
+    color: var(--text-muted);
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
   }
   #legend h1 {
     font-size: 12px; font-weight: 600; margin: 0 24px 8px 0;
@@ -140,14 +148,21 @@
 <body>
 <canvas id="graph"></canvas>
 <div id="legend">
-  <button id="legend-toggle" type="button" aria-label="Collapse folder menu" aria-expanded="true">‹</button>
+  <button id="legend-toggle" type="button" aria-label="Collapse menu" aria-expanded="true">‹</button>
   <h1>VAULT GRAPH — live</h1>
+  <div id="legend-menu">
+    <button class="menu-row" id="sound-toggle" type="button" aria-label="Mute activity sounds" aria-pressed="false">
+      <span class="menu-icon"></span><span class="menu-label">Sound</span><span class="menu-state">On</span>
+    </button>
+    <button class="menu-row" id="labels-toggle" type="button" aria-label="Hide note labels" aria-pressed="false">
+      <span class="menu-icon">Aa</span><span class="menu-label">Labels</span><span class="menu-state">On</span>
+    </button>
+  </div>
+  <div class="section-label">Folders</div>
   <div id="legend-rows"></div>
   <div class="meta" id="legend-meta">loading…</div>
 </div>
 <div id="tooltip"></div>
-<button id="labels-toggle" type="button" aria-label="Hide note labels" aria-pressed="false">Aa</button>
-<button id="sound-toggle" type="button" aria-label="Mute activity sounds" aria-pressed="false">🔊</button>
 
 <script>
 const PALETTE = [
@@ -176,7 +191,7 @@ const soundToggle = document.getElementById('sound-toggle');
 legendToggle.addEventListener('click', () => {
   const collapsed = legend.classList.toggle('collapsed');
   legendToggle.textContent = collapsed ? '›' : '‹';
-  legendToggle.setAttribute('aria-label', collapsed ? 'Expand folder menu' : 'Collapse folder menu');
+  legendToggle.setAttribute('aria-label', collapsed ? 'Expand menu' : 'Collapse menu');
   legendToggle.setAttribute('aria-expanded', String(!collapsed));
 });
 
@@ -192,6 +207,7 @@ try {
 }
 
 function updateLabelsToggle() {
+  labelsToggle.querySelector('.menu-state').textContent = labelsVisible ? 'On' : 'Off';
   labelsToggle.setAttribute('aria-pressed', String(!labelsVisible));
   labelsToggle.setAttribute('aria-label', labelsVisible ? 'Hide note labels' : 'Show note labels');
 }
@@ -214,8 +230,20 @@ try {
   // private window / storage blocked — fall back to the default (on)
 }
 
+// Thin-line icons (stroke only, currentColor) to match the Aa labels
+// glyph's fine-lined look instead of a colorful bitmap emoji.
+const ICON_SOUND_ON = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+  '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>' +
+  '<path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>' +
+  '<path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg>';
+const ICON_SOUND_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+  '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>' +
+  '<line x1="23" y1="9" x2="17" y2="15"></line>' +
+  '<line x1="17" y1="9" x2="23" y2="15"></line></svg>';
+
 function updateSoundToggle() {
-  soundToggle.textContent = soundEnabled ? '🔊' : '🔇';
+  soundToggle.querySelector('.menu-icon').innerHTML = soundEnabled ? ICON_SOUND_ON : ICON_SOUND_OFF;
+  soundToggle.querySelector('.menu-state').textContent = soundEnabled ? 'On' : 'Off';
   soundToggle.setAttribute('aria-pressed', String(!soundEnabled));
   soundToggle.setAttribute('aria-label', soundEnabled ? 'Mute activity sounds' : 'Unmute activity sounds');
 }
