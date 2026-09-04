@@ -5,8 +5,8 @@
 <title>Vault Graph</title>
 <style>
   :root {
-    --page-plane:     #0d0d0d;
-    --surface-1:      #1a1a19;
+    --page-plane:     #050507;
+    --surface-1:      #07070b;
     --text-primary:   #ffffff;
     --text-secondary: #c3c2b7;
     --text-muted:     #898781;
@@ -126,9 +126,15 @@
     font-size: 12px; font-weight: 600; margin: 0 24px 8px 0;
     color: var(--text-primary); letter-spacing: 0.02em;
   }
-  #legend .row { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
+  #legend .row {
+    display: flex; align-items: center; gap: 8px; margin: 1px 0;
+    padding: 3px 4px; border-radius: 4px; cursor: pointer;
+  }
+  #legend .row:hover { background: var(--border); }
+  #legend .row.folder-active { background: var(--border); }
   #legend .swatch { width: 10px; height: 10px; border-radius: 50%; flex: none; }
   #legend .row span.name { color: var(--text-secondary); }
+  #legend .row.folder-active span.name { color: var(--text-primary); }
   #legend .meta { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); color: var(--text-muted); }
 
   #tooltip {
@@ -143,6 +149,51 @@
     max-width: 280px;
   }
   #tooltip .folder { color: var(--text-muted); font-size: 11px; }
+
+  /* Folder inspector: click a legend row to fly the camera to that folder's
+     cluster and pop this panel open with its notes. Mirrors the legend's own
+     translucent-panel look, on the opposite (now-free) corner. */
+  #folder-panel {
+    position: fixed; top: 14px; right: 14px;
+    width: 260px; max-height: calc(100vh - 28px);
+    overflow-y: auto;
+    background: rgba(10, 10, 15, 0.85);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+    pointer-events: none;
+    transition: opacity 160ms ease, transform 160ms ease;
+  }
+  #folder-panel.open { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+  #folder-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  #folder-panel-title {
+    font-size: 12px; font-weight: 600; color: var(--text-primary);
+    letter-spacing: 0.02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  #folder-panel-close {
+    flex: none; width: 18px; height: 18px; padding: 0;
+    border: 0; border-radius: 4px; background: transparent;
+    color: var(--text-muted); cursor: pointer; font: inherit; font-size: 14px; line-height: 18px;
+  }
+  #folder-panel-close:hover { background: var(--border); color: var(--text-primary); }
+  #folder-panel-meta {
+    margin: 4px 0 8px; padding-bottom: 8px;
+    border-bottom: 1px solid var(--border); color: var(--text-muted);
+  }
+  .folder-note-row {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+    padding: 3px 4px; margin: 1px 0; border-radius: 4px; cursor: pointer;
+  }
+  .folder-note-row:hover { background: var(--border); }
+  .folder-note-label {
+    color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .folder-note-row:hover .folder-note-label { color: var(--text-primary); }
+  .folder-note-meta { flex: none; color: var(--text-muted); font-size: 10px; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -163,6 +214,14 @@
   <div class="meta" id="legend-meta">loading…</div>
 </div>
 <div id="tooltip"></div>
+<div id="folder-panel">
+  <div id="folder-panel-header">
+    <span id="folder-panel-title"></span>
+    <button id="folder-panel-close" type="button" aria-label="Close folder panel">×</button>
+  </div>
+  <div id="folder-panel-meta"></div>
+  <div id="folder-panel-notes"></div>
+</div>
 
 <script>
 const PALETTE = [
@@ -184,6 +243,7 @@ const canvas = document.getElementById('graph');
 const ctx = canvas.getContext('2d');
 const tooltip = document.getElementById('tooltip');
 const legend = document.getElementById('legend');
+const folderPanel = document.getElementById('folder-panel');
 const legendToggle = document.getElementById('legend-toggle');
 const labelsToggle = document.getElementById('labels-toggle');
 const soundToggle = document.getElementById('sound-toggle');
@@ -194,6 +254,26 @@ legendToggle.addEventListener('click', () => {
   legendToggle.setAttribute('aria-label', collapsed ? 'Expand menu' : 'Collapse menu');
   legendToggle.setAttribute('aria-expanded', String(!collapsed));
 });
+
+// delegated (not per-row) since renderLegend() fully rebuilds #legend-rows'
+// children on every /api/graph poll — a listener on the row itself would
+// need re-binding every 2s, one on the stable parent survives that for free
+document.getElementById('legend-rows').addEventListener('click', (e) => {
+  const row = e.target.closest('.row');
+  if (!row) return;
+  focusFolder(row.dataset.folder);
+  document.querySelectorAll('#legend-rows .row').forEach(r => {
+    r.classList.toggle('folder-active', r.dataset.folder === folderFocusId);
+  });
+});
+
+document.getElementById('folder-panel-notes').addEventListener('click', (e) => {
+  const row = e.target.closest('.folder-note-row');
+  if (!row) return;
+  focusId = row.dataset.id === focusId ? null : row.dataset.id;
+});
+
+document.getElementById('folder-panel-close').addEventListener('click', closeFolderPanel);
 
 // on-canvas note-title labels (hub/focused/hovered notes) — persisted across
 // reloads so the choice sticks; this is a local single-user page, not a
@@ -256,9 +336,18 @@ soundToggle.addEventListener('click', () => {
   ensureAudioCtx();  // this click is a user gesture — use it to unlock audio early
 });
 
+// Soft radial gradient instead of a flat fill, so the sky reads with a
+// little depth (a faint glow toward center, deepening toward the edges)
+// rather than a single uniform black plane. Rebuilt only on resize, not
+// per frame, since it depends solely on canvas dimensions.
+let bgGradient;
 function resize() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
+  const cx = canvas.width / 2, cy = canvas.height / 2;
+  bgGradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.hypot(cx, cy));
+  bgGradient.addColorStop(0, '#0c0c17');
+  bgGradient.addColorStop(1, '#020203');
 }
 window.addEventListener('resize', resize);
 resize();
@@ -268,6 +357,7 @@ let edges = [];              // [{source,target}] (ids)
 let folders = [];
 let focusId = null;
 let hoverId = null;
+let folderFocusId = null;    // legend folder key with an open inspector panel ("Other" included)
 let anchorId = null;         // most-connected note — pinned at the origin, the "sun" everything else orbits
 let activityCursor = 0;      // cursor into /api/activity — highest event id applied so far
 let edgeActivity = new Map();     // edgeKey(a,b) -> {intensity, lastUpdate, action} — decays independently per edge
@@ -316,6 +406,38 @@ function updateLegendGlow() {
 
 // ---- orbit camera: drag rotates the whole system around the fixed anchor, wheel dollies in/out ----
 const camera = { yaw: 0, pitch: 0.35, dist: 420 };
+
+// programmatic "fly to" for the folder inspector (drag/wheel orbit above is
+// user-driven and untouched; this eases the same camera.yaw/pitch/dist
+// fields to a computed target over time). Any manual drag or scroll cancels
+// an in-flight animation rather than fighting it - see the mousedown/wheel
+// listeners below.
+let cameraAnim = null; // {startYaw,startPitch,startDist,targetYaw,targetPitch,targetDist,startTime,duration}
+
+function easeInOutCubic(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+function flyCameraTo(targetYaw, targetPitch, targetDist, duration = 700) {
+  cameraAnim = {
+    startYaw: camera.yaw, startPitch: camera.pitch, startDist: camera.dist,
+    targetYaw, targetPitch, targetDist,
+    startTime: Date.now(), duration,
+  };
+}
+
+function updateCameraAnim() {
+  if (!cameraAnim) return;
+  const t = Math.min(1, (Date.now() - cameraAnim.startTime) / cameraAnim.duration);
+  const e = easeInOutCubic(t);
+  // shortest angular path, so a fly-to never spins the long way around
+  let dyaw = cameraAnim.targetYaw - cameraAnim.startYaw;
+  dyaw = ((dyaw + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+  camera.yaw = cameraAnim.startYaw + dyaw * e;
+  camera.pitch = cameraAnim.startPitch + (cameraAnim.targetPitch - cameraAnim.startPitch) * e;
+  camera.dist = cameraAnim.startDist + (cameraAnim.targetDist - cameraAnim.startDist) * e;
+  if (t >= 1) cameraAnim = null;
+}
 const FOCAL = 420;
 
 function project(node) {
@@ -338,18 +460,36 @@ function project(node) {
 
 let projected = [];  // [{node, sx, sy, sr, depth, factor}], recomputed once per frame, shared by drawing + hit-testing
 
-// ---- starfield backdrop (fixed to viewport, twinkles, doesn't move with the camera) ----
+// ---- starfield backdrop (fixed to viewport, doesn't move with the camera) ----
+// Real starlight scintillation is small, irregular, and has no visible shape
+// to it - not a big rhythmic pulse. Each star has a steady baseline
+// brightness of its own, with two small independent-frequency wobbles
+// layered on top (rather than one large sine) so the flicker reads as
+// irregular, plus a barely-perceptible sway so the field isn't dead-static.
 const STARS = Array.from({ length: 220 }, () => ({
   x: Math.random(), y: Math.random(),
-  r: Math.random() * 1.3 + 0.3,
-  seed: Math.random() * 1000,
+  r: Math.random() * 1.2 + 0.3,
+  baseAlpha: 0.35 + Math.random() * 0.35,
+  seed1: Math.random() * 1000,
+  seed2: Math.random() * 1000,
+  freq1: 0.0006 + Math.random() * 0.0007,
+  freq2: 0.004 + Math.random() * 0.006,
+  swayAmp: 0.15 + Math.random() * 0.35,
+  swayFreq: 0.00012 + Math.random() * 0.00018,
+  swayPhaseX: Math.random() * Math.PI * 2,
+  swayPhaseY: Math.random() * Math.PI * 2,
 }));
 function drawStarfield() {
   const now = Date.now();
   for (const s of STARS) {
-    const alpha = 0.25 + 0.6 * Math.abs(Math.sin(now / 1400 + s.seed));
+    const sx = s.x * canvas.width + Math.sin(now * s.swayFreq + s.swayPhaseX) * s.swayAmp;
+    const sy = s.y * canvas.height + Math.cos(now * s.swayFreq * 0.8 + s.swayPhaseY) * s.swayAmp;
+
+    const flicker = 0.08 * Math.sin(now * s.freq1 + s.seed1) + 0.05 * Math.sin(now * s.freq2 + s.seed2);
+    const alpha = Math.max(0.15, Math.min(1, s.baseAlpha + flicker));
+
     ctx.beginPath();
-    ctx.arc(s.x * canvas.width, s.y * canvas.height, s.r, 0, Math.PI * 2);
+    ctx.arc(sx, sy, s.r, 0, Math.PI * 2);
     ctx.fillStyle = `rgba(255,255,255,${alpha})`;
     ctx.fill();
   }
@@ -614,7 +754,7 @@ function renderLegend(data) {
   rows.innerHTML = '';
   folders.forEach((f, i) => {
     const row = document.createElement('div');
-    row.className = 'row';
+    row.className = 'row' + (f === folderFocusId ? ' folder-active' : '');
     row.dataset.folder = f;
     row.innerHTML = `<span class="swatch" style="background:${colorForSlot(i)}"></span><span class="name">${f}</span>`;
     rows.appendChild(row);
@@ -622,13 +762,68 @@ function renderLegend(data) {
   const hasOther = data.nodes.some(n => n.slot === -1);
   if (hasOther) {
     const row = document.createElement('div');
-    row.className = 'row';
+    row.className = 'row' + (folderFocusId === 'Other' ? ' folder-active' : '');
     row.dataset.folder = 'Other';
     row.innerHTML = `<span class="swatch" style="background:${OTHER_COLOR}"></span><span class="name">Other</span>`;
     rows.appendChild(row);
   }
   document.getElementById('legend-meta').textContent =
     `${data.nodes.length} notes · ${data.edges.length} links`;
+}
+
+// ---- folder inspector: click a legend row to fly the camera to that
+// folder's cluster and pop this panel open with its notes ----
+function notesForFolderKey(key) {
+  const all = Array.from(nodesById.values());
+  return key === 'Other' ? all.filter(n => n.slot === -1) : all.filter(n => n.folder === key);
+}
+
+function focusFolder(key) {
+  if (folderFocusId === key) { closeFolderPanel(); return; }
+  const notes = notesForFolderKey(key);
+  if (!notes.length) return;
+  folderFocusId = key;
+  renderFolderPanel(key, notes);
+
+  let cx = 0, cy = 0, cz = 0;
+  notes.forEach(n => { cx += n.x; cy += n.y; cz += n.z; });
+  cx /= notes.length; cy /= notes.length; cz /= notes.length;
+
+  let maxR = 0;
+  notes.forEach(n => { maxR = Math.max(maxR, Math.hypot(n.x - cx, n.y - cy, n.z - cz)); });
+
+  // solve for the yaw/pitch that puts (cx,cy,cz) on-axis under project()'s
+  // own yaw-then-pitch rotation, so the cluster centers on screen
+  const targetYaw = Math.atan2(-cx, cz);
+  const targetPitch = Math.min(1.4, Math.max(-1.4, Math.atan2(cy, Math.hypot(cx, cz))));
+  const targetDist = Math.min(900, Math.max(150, maxR * 2.6 + 120));
+
+  flyCameraTo(targetYaw, targetPitch, targetDist);
+}
+
+function closeFolderPanel() {
+  folderFocusId = null;
+  folderPanel.classList.remove('open');
+  document.querySelectorAll('#legend-rows .row').forEach(r => r.classList.remove('folder-active'));
+}
+
+function renderFolderPanel(key, notes) {
+  document.getElementById('folder-panel-title').textContent = key;
+  document.getElementById('folder-panel-meta').textContent =
+    `${notes.length} note${notes.length === 1 ? '' : 's'}`;
+  const list = document.getElementById('folder-panel-notes');
+  list.innerHTML = '';
+  const showFolder = key === 'Other'; // "Other" spans several real folders, so name each one
+  [...notes].sort((a, b) => a.label.localeCompare(b.label)).forEach(n => {
+    const row = document.createElement('div');
+    row.className = 'folder-note-row';
+    row.dataset.id = n.id;
+    const ago = timeAgo(Date.now() - n.mtime);
+    row.innerHTML = `<span class="folder-note-label">${n.label}</span>` +
+      `<span class="folder-note-meta">${showFolder ? n.folder + ' · ' : ''}${ago}</span>`;
+    list.appendChild(row);
+  });
+  folderPanel.classList.add('open');
 }
 
 // ---- 3D force simulation ----
@@ -722,7 +917,7 @@ function computeProjection() {
 }
 
 function draw() {
-  ctx.fillStyle = getVar('--surface-1');
+  ctx.fillStyle = bgGradient || getVar('--surface-1');
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   drawStarfield();
 
@@ -974,6 +1169,7 @@ let orbitStartCamera = { yaw: 0, pitch: 0 };
 
 canvas.addEventListener('mousedown', (e) => {
   if (nodeAt(e.offsetX, e.offsetY)) return; // let click handle focus toggling on a node
+  cameraAnim = null; // manual orbit takes over from wherever a fly-to currently is
   isOrbiting = true;
   orbitDragDistance = 0;
   orbitStartClient = { x: e.clientX, y: e.clientY };
@@ -997,6 +1193,7 @@ window.addEventListener('mouseup', () => {
 
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
+  cameraAnim = null; // manual zoom takes over from wherever a fly-to currently is
   const factor = Math.exp(-e.deltaY * 0.001);
   camera.dist = Math.min(1600, Math.max(120, camera.dist / factor));
 }, { passive: false });
@@ -1034,6 +1231,7 @@ function timeAgo(ms) {
 
 function loop() {
   step();
+  updateCameraAnim();
   draw();
   updateLegendGlow();
   requestAnimationFrame(loop);
