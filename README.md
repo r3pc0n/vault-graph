@@ -4,6 +4,8 @@ A live, 3D force-directed graph of an Obsidian vault — notes as nodes, `[[wiki
 
 No build step, no framework, no dependencies beyond the Python standard library. Point it at a vault folder and run it.
 
+![Demo](docs/images/demo.gif)
+
 ## What it does
 
 - **3D force-directed layout**: the highest-degree note is pinned as a gravitational anchor; every other note orbits it under real inverse-square gravity plus a slow swirl, so the whole graph settles into something that reads as a small galaxy instead of a static tree.
