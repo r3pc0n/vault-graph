@@ -16,9 +16,11 @@ No build step, no framework, no dependencies beyond the Python standard library.
 - **Recency glow**: a note that changed in the last 90 seconds gets a soft white halo, decaying over time — works from file mtimes alone, no extra plumbing required.
 - **Activity pulse** *(optional)*: if something reports "I just read/wrote this note" to a small HTTP endpoint, that note (and its edges, and its folder's legend row) pulses in real time — teal for a read, gold with expanding rings for a write. See [Live activity integration](#live-activity-integration-optional) below.
 - **Sound** *(optional)*: a wind-chime sample plays on each activity pulse, pitch/pan randomized per event so a burst of activity spreads across the stereo field instead of stacking. Muteable, persisted per-browser.
+- The hero GIF above is silent; this one has the wind-chime feedback and the live read/write pulse audible together. 
 
-  🔊 [Watch a short clip with sound](docs/images/audio-demo.mp4) — the hero GIF above is silent; this one has the wind-chime feedback and the live read/write pulse audible together.
-- Toggleable on-canvas labels, hover tooltips, click-to-focus neighbor highlighting, an animated starfield backdrop.
+https://github.com/user-attachments/assets/cf23bf40-87f8-4b32-ab62-507298323fc8
+
+*Live read/write demo*
 
 ## Requirements
 
