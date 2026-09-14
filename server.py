@@ -31,6 +31,23 @@ OBSIDIAN_VAULT_NAME = CONFIG.get("obsidian_vault_name") or os.path.basename(VAUL
 WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)")
 SKIP_DIRS = {".obsidian", ".git"}
 
+# Optional: lets the front-end's theme picker offer "Follow Omarchy Theme",
+# live-matching whatever theme the OS is currently in. Same state file
+# Omarchy itself updates on every theme switch (and that Murmur's own
+# Omarchy-follow feature watches) - a plain text file holding the theme's
+# slug, e.g. "kanagawa", which lines up exactly with this app's own THEMES
+# keys since those palettes were built from Omarchy's themes.
+OMARCHY_THEME_FILE = os.path.join(os.path.expanduser("~"), ".local", "state", "omarchy", "current", "theme.name")
+
+
+def _omarchy_theme():
+    try:
+        with open(OMARCHY_THEME_FILE, encoding="utf-8") as f:
+            name = f.read().strip()
+        return {"available": True, "theme": name or None}
+    except OSError:
+        return {"available": False, "theme": None}
+
 # ---- static assets (currently just the wind-chime sample) served from our
 # own assets/ folder, kept separate from the vault-note serving above.
 ASSETS_DIR = os.path.join(HERE, "assets")
@@ -199,6 +216,8 @@ class Handler(BaseHTTPRequestHandler):
             self._serve_file("index.html", "text/html")
         elif parsed.path == "/api/graph":
             self._send_json(200, _graph_json())
+        elif parsed.path == "/api/theme":
+            self._send_json(200, _omarchy_theme())
         elif parsed.path == "/api/activity":
             since_raw = parse_qs(parsed.query).get("since", ["0"])[0]
             try:

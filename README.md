@@ -13,6 +13,7 @@ No build step, no framework, no dependencies beyond the Python standard library.
 - **Folder inspector**: click a folder in the legend to fly the camera in on that folder's cluster and pop open a panel listing its notes — the rest of the graph fades so the selected folder is unambiguous. Click a note in the list to focus it, or its open-in-Obsidian icon to jump straight to editing it there; click the folder again (or the panel's ×) to close.
 - **Folder-color legend**: the first 8 top-level folders get distinct colors; everything else (including root-level notes) folds into a shared "Other" bucket.
 - **30 color themes**: a built-in default plus 29 real Omarchy palettes (Nord, Gruvbox, Catppuccin, Rosé Pine, and more), picked from the menu and persisted per-browser — no restart needed, no config file to edit.
+- **Follow Omarchy Theme** *(optional, Omarchy only)*: an extra picker option that live-matches whatever theme the OS is currently in — polls the same state file Omarchy itself updates on every switch, so changing your system theme changes the graph's within a couple seconds, no manual re-pick needed. Only offered when that state file exists on the machine running the server.
 - **Recency glow**: a note that changed in the last 90 seconds gets a soft white halo, decaying over time — works from file mtimes alone, no extra plumbing required.
 - **Activity pulse** *(optional)*: if something reports "I just read/wrote this note" to a small HTTP endpoint, that note (and its edges, and its folder's legend row) pulses in real time — teal for a read, gold with expanding rings for a write. See [Live activity integration](#live-activity-integration-optional) below.
 - **Sound** *(optional)*: a wind-chime sample plays on each activity pulse, pitch/pan randomized per event so a burst of activity spreads across the stereo field instead of stacking. Muteable, persisted per-browser.
@@ -61,6 +62,7 @@ and open `http://127.0.0.1:8792/`. Pass `--no-open` to skip the automatic browse
 - `server.py` is a `ThreadingHTTPServer` that walks `vault_dir` for `.md` files, extracts `[[wikilinks]]` with a regex, and re-scans only when a file's mtime changes — so polling stays cheap even on a vault with hundreds of notes. It serves the graph as JSON at `/api/graph` and re-reads `index.html` from disk on every request, so front-end edits show up on a browser refresh with no restart.
 - `index.html` is a single self-contained canvas page: the physics simulation, rendering, and all UI live in one file, polling `/api/graph` every 2 seconds for structural changes.
 - `.obsidian` and `.git` directories inside your vault are skipped automatically.
+- `/api/theme` reports whether this machine runs Omarchy and, if so, its current theme slug, read from `~/.local/state/omarchy/current/theme.name`. Only polled by the front-end while "Follow Omarchy Theme" is selected.
 
 ## Live activity integration (optional)
 

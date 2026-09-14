@@ -1020,22 +1020,60 @@ const THEME_LABELS = {
 };
 
 const THEME_STORAGE_KEY = 'vault-graph-theme';
+// Sentinel picker value, not a real THEMES key: means "poll /api/theme and
+// live-match whatever palette that resolves to" instead of a fixed pick.
+const OMARCHY_FOLLOW_VALUE = '__omarchy__';
 let currentTheme = 'Default';
+let omarchyAvailable = false;   // set once, from /api/theme, before the option is offered
+let lastOmarchyPalette = null;  // last THEMES key actually applied while following, to skip redundant re-applies
 
-function applyTheme(name) {
-  currentTheme = THEMES[name] ? name : 'Default';
+function setThemeVars(themeObj) {
   const root = document.documentElement.style;
-  for (const [k, v] of Object.entries(THEMES[currentTheme])) {
+  for (const [k, v] of Object.entries(themeObj)) {
     root.setProperty('--' + k, v);
   }
   refreshThemeColors();
+}
+
+function applyTheme(name) {
+  if (name === OMARCHY_FOLLOW_VALUE && omarchyAvailable) {
+    currentTheme = OMARCHY_FOLLOW_VALUE;
+    lastOmarchyPalette = null;  // force the next poll tick to apply, even if it resolves to the palette already on screen
+    syncOmarchyTheme();
+  } else {
+    currentTheme = THEMES[name] ? name : 'Default';
+    setThemeVars(THEMES[currentTheme]);
+  }
   const select = document.getElementById('theme-select');
   if (select && select.value !== currentTheme) select.value = currentTheme;
   try { localStorage.setItem(THEME_STORAGE_KEY, currentTheme); } catch (e) {}
 }
 
+// Only meaningful while currentTheme === OMARCHY_FOLLOW_VALUE - polled
+// alongside pollActivity() below so a live OS theme switch shows up here
+// within a couple seconds, no restart needed.
+async function syncOmarchyTheme() {
+  if (currentTheme !== OMARCHY_FOLLOW_VALUE) return;
+  try {
+    const res = await fetch('/api/theme');
+    const data = await res.json();
+    if (data.theme && THEMES[data.theme] && data.theme !== lastOmarchyPalette) {
+      lastOmarchyPalette = data.theme;
+      setThemeVars(THEMES[data.theme]);
+    }
+  } catch (e) {
+    // server between restarts, etc - just try again next tick
+  }
+}
+
+function pollOmarchyTheme() {
+  syncOmarchyTheme();
+  setTimeout(pollOmarchyTheme, 2000);
+}
+
 function initThemeSelect() {
   const select = document.getElementById('theme-select');
+
   for (const key of Object.keys(THEMES)) {
     const opt = document.createElement('option');
     opt.value = key;
@@ -1044,14 +1082,34 @@ function initThemeSelect() {
   }
   select.addEventListener('change', () => applyTheme(select.value));
 
-  let stored = 'Default';
+  // Apply a real, synchronous pick immediately - drawing must never start
+  // with colors unset. Whether the stored pick was "Follow Omarchy Theme"
+  // is sorted out a moment later, once /api/theme confirms it's actually
+  // offered on this machine; nothing here waits on that network round trip.
+  const storedRaw = (() => {
+    try { return localStorage.getItem(THEME_STORAGE_KEY); } catch (e) { return null; }
+  })();
+  applyTheme(THEMES[storedRaw] ? storedRaw : 'Default');
+
+  checkOmarchyAvailability(storedRaw === OMARCHY_FOLLOW_VALUE, select);
+}
+
+async function checkOmarchyAvailability(wantsFollow, select) {
   try {
-    const s = localStorage.getItem(THEME_STORAGE_KEY);
-    if (s && THEMES[s]) stored = s;
+    const res = await fetch('/api/theme');
+    const data = await res.json();
+    omarchyAvailable = !!data.available;
   } catch (e) {
-    // private window / storage blocked - fall back to Default
+    omarchyAvailable = false;
   }
-  applyTheme(stored);
+  if (!omarchyAvailable) return;
+
+  const followOpt = document.createElement('option');
+  followOpt.value = OMARCHY_FOLLOW_VALUE;
+  followOpt.textContent = 'Follow Omarchy Theme';
+  select.insertBefore(followOpt, select.firstChild);
+
+  if (wantsFollow) applyTheme(OMARCHY_FOLLOW_VALUE);
 }
 initThemeSelect();
 
@@ -1979,6 +2037,7 @@ function loop() {
 
 poll();
 pollActivity();
+pollOmarchyTheme();
 loop();
 </script>
 </body>
