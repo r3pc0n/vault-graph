@@ -1025,7 +1025,38 @@ const THEME_STORAGE_KEY = 'vault-graph-theme';
 const OMARCHY_FOLLOW_VALUE = '__omarchy__';
 let currentTheme = 'Default';
 let omarchyAvailable = false;   // set once, from /api/theme, before the option is offered
-let lastOmarchyPalette = null;  // last THEMES key actually applied while following, to skip redundant re-applies
+let lastOmarchyPalette = null;  // signature of the palette last applied while following, to skip redundant re-applies
+
+// Custom Omarchy themes (hand-made, Aether exports) have no hand-built THEMES
+// entry, so build one from the live theme's colors.toml. Folder colors take
+// the theme's accent and ANSI colors in order, skipping duplicates.
+function paletteFromOmarchyColors(c) {
+  const bg = c.background || '#000000';
+  const fg = c.foreground || '#ffffff';
+  const dim = c.dark_foreground || c.muted || fg;
+  const series = [];
+  for (const k of ['accent', 'blue', 'cyan', 'green', 'yellow', 'magenta', 'red', 'orange',
+                   'bright_blue', 'bright_cyan', 'bright_green', 'bright_yellow',
+                   'bright_magenta', 'bright_red', 'brown']) {
+    const v = c[k] && c[k].toLowerCase();
+    if (v && !series.includes(v)) series.push(v);
+    if (series.length === 8) break;
+  }
+  while (series.length < 8) series.push(dim);
+  const palette = {
+    "page-plane": bg,
+    "surface-1": bg,
+    "bg-gradient-center": c.lighter_background || bg,
+    "bg-gradient-edge": c.darker_background || bg,
+    "gridline": dim,
+    "other": dim,
+    "text-primary": fg,
+    "text-secondary": c.light_foreground || fg,
+    "text-muted": dim,
+  };
+  series.forEach((v, i) => { palette['series-' + (i + 1)] = v; });
+  return palette;
+}
 
 function setThemeVars(themeObj) {
   const root = document.documentElement.style;
@@ -1057,9 +1088,13 @@ async function syncOmarchyTheme() {
   try {
     const res = await fetch('/api/theme');
     const data = await res.json();
-    if (data.theme && THEMES[data.theme] && data.theme !== lastOmarchyPalette) {
-      lastOmarchyPalette = data.theme;
-      setThemeVars(THEMES[data.theme]);
+    // A hand-built palette wins; otherwise derive one from the theme's colors.
+    // The signature includes the colors so editing a custom theme shows up live.
+    const palette = THEMES[data.theme] || (data.colors && paletteFromOmarchyColors(data.colors));
+    const signature = THEMES[data.theme] ? data.theme : JSON.stringify(data.colors);
+    if (data.theme && palette && signature !== lastOmarchyPalette) {
+      lastOmarchyPalette = signature;
+      setThemeVars(palette);
     }
   } catch (e) {
     // server between restarts, etc - just try again next tick

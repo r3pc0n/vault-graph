@@ -8,6 +8,7 @@ import os
 import re
 import sys
 import threading
+import tomllib
 import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -38,15 +39,29 @@ SKIP_DIRS = {".obsidian", ".git"}
 # slug, e.g. "kanagawa", which lines up exactly with this app's own THEMES
 # keys since those palettes were built from Omarchy's themes.
 OMARCHY_THEME_FILE = os.path.join(os.path.expanduser("~"), ".local", "state", "omarchy", "current", "theme.name")
+# The live theme's palette. Custom themes (hand-made, Aether exports) have no
+# hand-built THEMES entry, so the front-end derives one from these colors.
+OMARCHY_COLORS_FILE = os.path.join(os.path.dirname(OMARCHY_THEME_FILE), "theme", "colors.toml")
+HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _omarchy_colors():
+    try:
+        with open(OMARCHY_COLORS_FILE, "rb") as f:
+            data = tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    colors = {k: v for k, v in data.items() if isinstance(v, str) and HEX_COLOR_RE.match(v)}
+    return colors or None
 
 
 def _omarchy_theme():
     try:
         with open(OMARCHY_THEME_FILE, encoding="utf-8") as f:
             name = f.read().strip()
-        return {"available": True, "theme": name or None}
+        return {"available": True, "theme": name or None, "colors": _omarchy_colors()}
     except OSError:
-        return {"available": False, "theme": None}
+        return {"available": False, "theme": None, "colors": None}
 
 # ---- static assets (currently just the wind-chime sample) served from our
 # own assets/ folder, kept separate from the vault-note serving above.
