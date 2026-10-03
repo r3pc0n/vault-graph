@@ -29,6 +29,25 @@ VAULT_DIR_NORM = os.path.normpath(VAULT_DIR)
 # always match. Falls back to the folder's own basename, the common case.
 OBSIDIAN_VAULT_NAME = CONFIG.get("obsidian_vault_name") or os.path.basename(VAULT_DIR_NORM)
 
+
+# Optional frame-rate caps, for machines where drawing every display frame
+# costs too much CPU (the scene is never fully still: swirl and twinkle).
+# max_fps: drawing cap while something is happening; null/omitted = every
+# display frame, the original behavior. idle_fps: cap when nothing is
+# happening (no pulse, input or folder tracking); null = no idle slowdown.
+# Anything that isn't a positive number falls back to the default.
+def _fps_setting(key, default):
+    value = CONFIG.get(key, default)
+    if value is None:
+        return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+        return value
+    return default
+
+
+MAX_FPS = _fps_setting("max_fps", None)
+IDLE_FPS = _fps_setting("idle_fps", 10)
+
 WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)")
 SKIP_DIRS = {".obsidian", ".git"}
 
@@ -233,6 +252,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, _graph_json())
         elif parsed.path == "/api/theme":
             self._send_json(200, _omarchy_theme())
+        elif parsed.path == "/api/settings":
+            self._send_json(200, {"max_fps": MAX_FPS, "idle_fps": IDLE_FPS})
         elif parsed.path == "/api/activity":
             since_raw = parse_qs(parsed.query).get("since", ["0"])[0]
             try:

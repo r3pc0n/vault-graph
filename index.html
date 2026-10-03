@@ -2062,18 +2062,77 @@ function timeAgo(ms) {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-function loop() {
-  step();
-  updateFolderTracking();
+// Frame pacing: the galaxy swirl and star twinkle mean the scene is never
+// still, so drawing every display frame keeps a CPU thread busy for good.
+// The physics (step) and folder tracking are tuned per step, not per second,
+// so they run at a fixed 60 steps/s, catching up between drawn frames: motion
+// speed is the same at any drawing rate or display refresh rate. Activity
+// pulses decay by wall-clock time, so they're unaffected.
+// Idle mode: with no pulse, label, drag/zoom/hover or folder tracking going
+// on, only the slow swirl and twinkle remain, so drawing drops to idle_fps.
+// Both rates come from vault-graph.json via /api/settings; until that answers
+// (or if it never does) these defaults apply. An interval of 0 = every frame.
+const SIM_STEP_MS = 1000 / 60;
+let drawIntervalMs = 0;             // max_fps: unset = every display frame
+let idleDrawIntervalMs = 1000 / 10; // idle_fps: default 10
+const INPUT_BUSY_MS = 1500;     // stay at full rate this long after the last mouse/wheel/key input
+// Enough steps to cover one idle frame plus jitter; after a hidden/paused
+// tab, don't replay minutes of physics in one go.
+let maxCatchupSteps = 8;
+let lastDrawAt = 0;
+let simDebtMs = 0;
+let lastInputAt = 0;
+
+async function loadFrameSettings() {
+  try {
+    const res = await fetch('/api/settings');
+    const data = await res.json();
+    drawIntervalMs = data.max_fps ? 1000 / data.max_fps : 0;
+    // idle can only slow drawing down, never speed it past max_fps
+    idleDrawIntervalMs = data.idle_fps ? Math.max(1000 / data.idle_fps, drawIntervalMs) : drawIntervalMs;
+    maxCatchupSteps = Math.max(8, Math.ceil(idleDrawIntervalMs / SIM_STEP_MS) + 2);
+  } catch (e) {
+    // older server without /api/settings, etc - keep the defaults
+  }
+}
+
+for (const type of ['pointermove', 'pointerdown', 'wheel', 'keydown']) {
+  window.addEventListener(type, () => { lastInputAt = Date.now(); }, { passive: true });
+}
+
+function isBusy() {
+  if (isOrbiting || folderTracking || Date.now() - lastInputAt < INPUT_BUSY_MS) return true;
+  if (edgeActivity.size || folderActivity.size) return true;
+  for (const node of nodesById.values()) {
+    if (node.readIntensity || node.writeFlash || node.labelExpiresAt ||
+        (node.writeRings && node.writeRings.length)) return true;
+  }
+  return false;
+}
+
+function loop(ts) {
+  requestAnimationFrame(loop);
+  const interval = isBusy() ? drawIntervalMs : idleDrawIntervalMs;
+  // 2 ms slack: rAF timestamps jitter, and a 60 Hz display would otherwise
+  // sometimes skip two frames instead of one
+  if (lastDrawAt && ts - lastDrawAt < interval - 2) return;
+  const elapsed = lastDrawAt ? ts - lastDrawAt : SIM_STEP_MS;
+  lastDrawAt = ts;
+  simDebtMs = Math.min(simDebtMs + elapsed, SIM_STEP_MS * maxCatchupSteps);
+  while (simDebtMs >= SIM_STEP_MS) {
+    step();
+    updateFolderTracking();
+    simDebtMs -= SIM_STEP_MS;
+  }
   draw();
   updateLegendGlow();
-  requestAnimationFrame(loop);
 }
 
 poll();
 pollActivity();
 pollOmarchyTheme();
-loop();
+loadFrameSettings();
+requestAnimationFrame(loop);
 </script>
 </body>
 </html>

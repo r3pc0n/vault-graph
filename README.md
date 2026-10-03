@@ -47,6 +47,18 @@ Edit `vault-graph.json`:
 
 Optional: `"obsidian_vault_name"` — needed only for the "open in Obsidian" links in the folder panel (see below). Obsidian identifies a vault by its *registered name*, not its folder path, and the two are usually but not always the same; this defaults to the vault folder's own name if omitted, which covers most setups. Set it explicitly if you renamed your vault inside Obsidian.
 
+Optional: `"max_fps"` and `"idle_fps"` — frame-rate caps for slower machines. The graph is never fully still (slow swirl, twinkle), so drawing every display frame keeps a CPU thread busy for as long as the page is open. `max_fps` caps drawing while something is happening (a pulse, mouse or keyboard input, folder tracking); omitted or `null` draws every display frame. `idle_fps` caps drawing when nothing is happening, where only the slow motion is left; it defaults to `10`, and `null` turns the idle slowdown off. Motion speed is the same at any rate: the physics always runs at 60 steps a second. For example, on an old laptop:
+
+```json
+{
+  "vault_dir": "/path/to/your/obsidian-vault",
+  "port": 8792,
+  "max_fps": 30
+}
+```
+
+The server reads these at startup, so restart it after changing them.
+
 Then run it:
 
 ```bash
@@ -61,6 +73,7 @@ and open `http://127.0.0.1:8792/`. Pass `--no-open` to skip the automatic browse
 
 - `server.py` is a `ThreadingHTTPServer` that walks `vault_dir` for `.md` files, extracts `[[wikilinks]]` with a regex, and re-scans only when a file's mtime changes — so polling stays cheap even on a vault with hundreds of notes. It serves the graph as JSON at `/api/graph` and re-reads `index.html` from disk on every request, so front-end edits show up on a browser refresh with no restart.
 - `index.html` is a single self-contained canvas page: the physics simulation, rendering, and all UI live in one file, polling `/api/graph` every 2 seconds for structural changes.
+- `/api/settings` hands the page the `max_fps` / `idle_fps` caps from `vault-graph.json`. Physics runs at a fixed 60 steps a second no matter how often the page draws, so motion speed doesn't depend on the frame-rate cap or the display's refresh rate.
 - `.obsidian` and `.git` directories inside your vault are skipped automatically.
 - `/api/theme` reports whether this machine runs Omarchy and, if so, its current theme slug, read from `~/.local/state/omarchy/current/theme.name`, plus the theme's hex colors from `~/.local/state/omarchy/current/theme/colors.toml` (used to derive a palette for themes without a built-in one). Only polled by the front-end while "Follow Omarchy Theme" is selected.
 
