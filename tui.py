@@ -57,6 +57,19 @@ CENTER_GRAVITY = 0.0008
 DAMPING = 0.80
 MIN_DIST = 0.5
 
+# index.html's 3D version ignores repulsion past distSq 40000 (dist 200) on
+# a spawn radius of 180-260 - about 2.2x REST_LEN there (90). This port's
+# much smaller REST_LEN never got the equivalent cutoff, so with enough
+# notes crammed into the tiny initial spawn disk (radius 4-12), two of them
+# landing almost on top of each other hits inverse-square repulsion at
+# near-zero separation - thousands of units of force in a single tick, far
+# more than CENTER_GRAVITY can ever claw back. REPEL_CUTOFF scales that same
+# 2.2x ratio down to this REST_LEN; MAX_STEP is a backstop clamp on top of
+# that, capping how far any single tick can move a node outright.
+REPEL_CUTOFF = REST_LEN * 200 / 90
+REPEL_CUTOFF_SQ = REPEL_CUTOFF * REPEL_CUTOFF
+MAX_STEP = REST_LEN
+
 ZOOM_MIN, ZOOM_MAX, ZOOM_FACTOR = 0.5, 20.0, 1.15
 PAN_STEP = 2.0
 LEGEND_WIDTH = 26
@@ -135,6 +148,32 @@ _DOT_BIT = {(0, 0): 0x01, (0, 1): 0x02, (0, 2): 0x04, (0, 3): 0x40,
             (1, 0): 0x08, (1, 1): 0x10, (1, 2): 0x20, (1, 3): 0x80}
 
 
+def _clip_line(x0, y0, x1, y1, xmax, ymax):
+    """Liang-Barsky clip of (x0,y0)-(x1,y1) to [0, xmax] x [0, ymax]. Returns
+    the clipped endpoints, or None if the line never touches that box - so a
+    Bresenham walk never runs past the pixels it could actually plot, no
+    matter how far outside the canvas a node has drifted."""
+    dx, dy = x1 - x0, y1 - y0
+    t0, t1 = 0.0, 1.0
+    for p, q in ((-dx, x0), (dx, xmax - x0), (-dy, y0), (dy, ymax - y0)):
+        if p == 0:
+            if q < 0:
+                return None
+            continue
+        r = q / p
+        if p < 0:
+            if r > t1:
+                return None
+            t0 = max(t0, r)
+        else:
+            if r < t0:
+                return None
+            t1 = min(t1, r)
+    if t0 > t1:
+        return None
+    return x0 + t0 * dx, y0 + t0 * dy, x0 + t1 * dx, y0 + t1 * dy
+
+
 class Canvas:
     """A virtual grid 2x4 "pixels" per terminal cell, addressed by pixel
     (x, y), rendered as Braille Unicode characters one cell at a time."""
@@ -159,6 +198,10 @@ class Canvas:
                 cell[1], cell[2] = color_name, priority
 
     def line(self, x0, y0, x1, y1, color_name, priority=0):
+        clipped = _clip_line(x0, y0, x1, y1, self.w - 1, self.h - 1)
+        if clipped is None:
+            return
+        x0, y0, x1, y1 = clipped
         x0, y0, x1, y1 = int(round(x0)), int(round(y0)), int(round(x1)), int(round(y1))
         dx, dy = abs(x1 - x0), abs(y1 - y0)
         sx, sy = (1 if x0 < x1 else -1), (1 if y0 < y1 else -1)
@@ -279,7 +322,10 @@ class AppState:
             for b in range(a + 1, len(ids)):
                 nj = nodes[ids[b]]
                 dx, dy = ni.x - nj.x, ni.y - nj.y
-                dist = max(math.hypot(dx, dy), MIN_DIST)
+                dist_sq = dx * dx + dy * dy
+                if dist_sq > REPEL_CUTOFF_SQ:
+                    continue
+                dist = max(math.sqrt(dist_sq), MIN_DIST)
                 force = REPEL_K / (dist * dist)
                 ux, uy = dx / dist, dy / dist
                 fx[ni.id] += ux * force
@@ -313,6 +359,11 @@ class AppState:
             n = nodes[i]
             n.vx = (n.vx + fx[i]) * DAMPING
             n.vy = (n.vy + fy[i]) * DAMPING
+            step = math.hypot(n.vx, n.vy)
+            if step > MAX_STEP:
+                scale = MAX_STEP / step
+                n.vx *= scale
+                n.vy *= scale
             n.x += n.vx
             n.y += n.vy
 
@@ -573,7 +624,8 @@ def run(stdscr):
 
     while not state.quit:
         now = time.time()
-        busy = state.pulses or (now - last_input_at < INPUT_BUSY_SECS)
+        state.pulses = {k: v for k, v in state.pulses.items() if v[1] > now}
+        busy = bool(state.pulses) or (now - last_input_at < INPUT_BUSY_SECS)
         stdscr.timeout(int(BUSY_INTERVAL_MS if busy else IDLE_INTERVAL_MS))
 
         if now - state.last_graph_fetch > GRAPH_POLL_SECS:
