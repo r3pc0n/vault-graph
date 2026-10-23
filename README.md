@@ -69,12 +69,19 @@ and open `http://127.0.0.1:8792/`. Pass `--no-open` to skip the automatic browse
 
 `vault-graph.json` is gitignored — it holds a machine-specific absolute path, so it's never meant to be committed.
 
+## Terminal client
+
+`tui.py` is the same live graph in a terminal instead of a browser — run `python3 tui.py` in this folder once `server.py` is running (no separate setup; it reads the same `vault-graph.json`). It polls the server exactly like the browser page does and respects the same `max_fps`/`idle_fps` caps.
+
+Arrow keys or `hjkl` pan, `+`/`-` zoom, `Tab` cycles notes by degree, `1`-`8` isolates a folder, `p` previews the selected note's text, `o` opens it in Obsidian, `q` quits.
+
 ## How it works
 
 - `server.py` is a `ThreadingHTTPServer` that walks `vault_dir` for `.md` files, extracts `[[wikilinks]]` with a regex, and re-scans only when a file's mtime changes — so polling stays cheap even on a vault with hundreds of notes. It serves the graph as JSON at `/api/graph` and re-reads `index.html` from disk on every request, so front-end edits show up on a browser refresh with no restart.
 - `index.html` is a single self-contained canvas page: the physics simulation, rendering, and all UI live in one file, polling `/api/graph` every 2 seconds for structural changes.
 - `/api/settings` hands the page the `max_fps` / `idle_fps` caps from `vault-graph.json`. Physics runs at a fixed 60 steps a second no matter how often the page draws, so motion speed doesn't depend on the frame-rate cap or the display's refresh rate.
-- `.obsidian` and `.git` directories inside your vault are skipped automatically.
+- `/api/note?path=<relpath>` returns `{"content": "..."}` for one note, read fresh off disk — `path` must resolve (after normalization) to a `.md` file inside `vault_dir`; anything else is a 404. Used by [`tui.py`](#terminal-client) for its note preview, but nothing stops the browser page from using it too.
+- Any hidden (dot-prefixed) directory inside your vault — `.obsidian`, `.git`, or your own — is skipped automatically.
 - `/api/theme` reports whether this machine runs Omarchy and, if so, its current theme slug, read from `~/.local/state/omarchy/current/theme.name`, plus the theme's hex colors from `~/.local/state/omarchy/current/theme/colors.toml` (used to derive a palette for themes without a built-in one). Only polled by the front-end while "Follow Omarchy Theme" is selected.
 
 ## Live activity integration (optional)

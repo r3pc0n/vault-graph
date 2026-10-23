@@ -34,6 +34,15 @@ GRAPH_POLL_SECS = 2.0
 ACTIVITY_POLL_SECS = 1.0
 RECENCY_GLOW_MS = 90_000
 PULSE_DURATION_SECS = 3.0
+INPUT_BUSY_SECS = 1.5  # stay at full rate this long after the last keypress
+
+# Frame pacing, same idea as index.html's loadFrameSettings(): /api/settings
+# gives max_fps/idle_fps from vault-graph.json, and with nothing actually
+# moving (no pulse, no recent key) the loop backs off to idle_fps instead of
+# ticking - and redrawing, and re-running physics - at full rate forever.
+# These are the pre-/api/settings defaults (older server, or unreachable).
+BUSY_INTERVAL_MS = 80
+IDLE_INTERVAL_MS = 100
 
 # Physics: a gravitational anchor (the highest-degree note) pinned at the
 # world origin, everything else under inverse-square repulsion, Hookean
@@ -546,14 +555,27 @@ def handle_key(ch, state):
 
 
 def run(stdscr):
+    global BUSY_INTERVAL_MS, IDLE_INTERVAL_MS
     curses.curs_set(0)
-    stdscr.timeout(80)
     color_pairs = init_colors()
     state = AppState()
     last_activity_poll = 0.0
+    last_input_at = 0.0
+
+    try:
+        settings = _get_json("/api/settings")
+        if settings.get("max_fps"):
+            BUSY_INTERVAL_MS = 1000 / settings["max_fps"]
+        if settings.get("idle_fps"):
+            IDLE_INTERVAL_MS = max(1000 / settings["idle_fps"], BUSY_INTERVAL_MS)
+    except (urllib.error.URLError, OSError, json.JSONDecodeError, KeyError):
+        pass  # older server without /api/settings, etc - keep the defaults
 
     while not state.quit:
         now = time.time()
+        busy = state.pulses or (now - last_input_at < INPUT_BUSY_SECS)
+        stdscr.timeout(int(BUSY_INTERVAL_MS if busy else IDLE_INTERVAL_MS))
+
         if now - state.last_graph_fetch > GRAPH_POLL_SECS:
             try:
                 state.apply_graph(_get_json("/api/graph"))
@@ -575,6 +597,7 @@ def run(stdscr):
 
         ch = stdscr.getch()
         if ch != -1:
+            last_input_at = time.time()
             handle_key(ch, state)
 
 

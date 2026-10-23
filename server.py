@@ -49,7 +49,6 @@ MAX_FPS = _fps_setting("max_fps", None)
 IDLE_FPS = _fps_setting("idle_fps", 10)
 
 WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)")
-SKIP_DIRS = {".obsidian", ".git"}
 
 # Optional: lets the front-end's theme picker offer "Follow Omarchy Theme",
 # live-matching whatever theme the OS is currently in. Same state file
@@ -159,7 +158,7 @@ def _activity_since(since_id):
 def _scan_files():
     """Yield (relpath, abspath, mtime) for every .md file in the vault."""
     for root, dirs, files in os.walk(VAULT_DIR):
-        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
         for name in files:
             if name.endswith(".md"):
                 abspath = os.path.join(root, name)
@@ -261,6 +260,22 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 since_id = 0
             self._send_json(200, {"events": _activity_since(since_id)})
+        elif parsed.path == "/api/note":
+            raw_path = parse_qs(parsed.query).get("path", [None])[0]
+            relpath = _resolve_vault_relpath(raw_path)
+            if relpath is None:
+                self.send_response(404)
+                self.end_headers()
+                return
+            abspath = os.path.join(VAULT_DIR, relpath)
+            try:
+                with open(abspath, encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+            except OSError:
+                self.send_response(404)
+                self.end_headers()
+                return
+            self._send_json(200, {"content": content})
         elif parsed.path.startswith("/assets/"):
             self._serve_asset(parsed.path[len("/assets/"):])
         else:
